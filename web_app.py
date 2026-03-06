@@ -5,70 +5,80 @@ from pydub import AudioSegment, effects
 import io
 import os
 
-st.set_page_config(page_title="AI Audio Studio Pro", page_icon="🎙️")
+st.set_page_config(page_title="AI Studio: All-in-One", page_icon="🎙️")
 
-st.title("🎙️ AI All-in-One Audio Studio")
+st.title("🎙️ AI Studio: TTS + Editor")
 st.markdown("---")
 
-# --- Effects Function ---
-def apply_audio_effects(audio_segment, pitch_val, echo_val):
-    # 1. Pitch Change (Bhari Awaz)
+# --- Professional Effects Function ---
+def apply_audio_effects(audio_segment, pitch_val, echo_val, speed_val, is_mastering):
+    # 1. Speed Change
+    if speed_val != 0:
+        # Simple speed change logic
+        new_sample_rate = int(audio_segment.frame_rate * (1 + speed_val/100))
+        audio_segment = audio_segment._spawn(audio_segment.raw_data, overrides={'frame_rate': new_sample_rate})
+        audio_segment = audio_segment.set_frame_rate(44100)
+
+    # 2. Pitch Change (Bhari Awaz)
     if pitch_val != 0:
         new_sample_rate = int(audio_segment.frame_rate * (2.0 ** (pitch_val / 12.0)))
         audio_segment = audio_segment._spawn(audio_segment.raw_data, overrides={'frame_rate': new_sample_rate})
         audio_segment = audio_segment.set_frame_rate(44100)
     
-    # 2. Echo Effect
+    # 3. Echo Effect
     if echo_val > 0:
-        # Create a delay based on echo level
-        delay = 200 # ms
-        echo = audio_segment - (25 - echo_val) # Reduce volume of echo
+        delay = 200 
+        echo = audio_segment - (25 - echo_val)
         audio_segment = audio_segment.overlay(echo, position=delay)
     
-    # 3. Mastering (Normalize volume)
-    audio_segment = effects.normalize(audio_segment)
+    # 4. Auto-Mastering (Normalize)
+    if is_mastering:
+        audio_segment = effects.normalize(audio_segment)
+    
     return audio_segment
 
-# --- Sidebar Controls ---
-st.sidebar.header("🎚️ Master Controls")
-pitch = st.sidebar.slider("Pitch (Bhari Awaz):", -15, 15, -10)
+# --- Sidebar: Full Controls ---
+st.sidebar.header("🎚️ Audio Master Controls")
+speed = st.sidebar.select_slider("Speed:", options=[-25, -15, 0, 10, 20], value=0)
+pitch = st.sidebar.select_slider("Pitch (Bhari Awaz):", options=[-15, -10, 0, 10, 15], value=-10)
 echo = st.sidebar.slider("Echo Level:", 0, 10, 3)
+mastering = st.sidebar.checkbox("Auto-Mastering", value=True)
 
 # --- Main Tabs ---
-tab1, tab2 = st.tabs(["✍️ Text-to-Speech", "📁 Upload & Edit"])
+tab1, tab2 = st.tabs(["✍️ Text-to-Speech (Bulk)", "📁 Upload & Edit"])
 
-# TAB 1: TTS
+# TAB 1: TTS with Bulk Feature
 with tab1:
-    script = st.text_area("Script Likhein:", placeholder="Yahan apna text likhein...")
+    script = st.text_area("Script Likhein (Bulk ke liye '---' use karein):", placeholder="Line 1\n---\nLine 2")
     voice = st.selectbox("Awaz Chunein:", ["hi-IN-MadhurNeural", "ur-PK-AsadNeural", "ur-PK-UzmaNeural"])
     
-    if st.button("🚀 Generate AI Voice"):
+    if st.button("🚀 Generate AI Voices"):
         if script:
-            with st.spinner("AI Awaz bana raha hai..."):
-                # Run Edge-TTS
-                communicate = edge_tts.Communicate(script, voice)
-                temp_file = "temp_tts.mp3"
-                asyncio.run(communicate.save(temp_file))
-                
-                # Apply Effects
-                sound = AudioSegment.from_file(temp_file)
-                processed = apply_audio_effects(sound, pitch, echo)
-                
-                # Show Result
-                out_io = io.BytesIO()
-                processed.export(out_io, format="mp3")
-                st.audio(out_io)
-                st.download_button("⬇️ Download AI Voice", out_io, "ai_studio_tts.mp3")
-                os.remove(temp_file)
+            scripts = [s.strip() for s in script.split("---") if s.strip()]
+            for idx, s_text in enumerate(scripts):
+                with st.spinner(f"Processing Part {idx+1}..."):
+                    communicate = edge_tts.Communicate(s_text, voice)
+                    temp_file = f"temp_{idx}.mp3"
+                    asyncio.run(communicate.save(temp_file))
+                    
+                    sound = AudioSegment.from_file(temp_file)
+                    processed = apply_audio_effects(sound, pitch, echo, speed, mastering)
+                    
+                    out_io = io.BytesIO()
+                    processed.export(out_io, format="mp3")
+                    st.audio(out_io, format="audio/mp3")
+                    st.download_button(f"⬇️ Download Part {idx+1}", out_io, f"ai_part_{idx+1}.mp3")
+                    os.remove(temp_file)
 
-# TAB 2: Upload
+# TAB 2: Upload & Edit
 with tab2:
     uploaded_file = st.file_uploader("Apni Audio Upload Karein (MP3/WAV):", type=["mp3", "wav"])
     if uploaded_file:
-        if st.button("✨ Edit Uploaded Audio"):
-            with st.spinner("Editing jari hai..."):
+        if st.button("✨ Apply Effects to Upload"):
+            with st.spinner("Editing in progress..."):
                 sound = AudioSegment.from_file(uploaded_file)
-                processed = apply_audio_effects(sound, pitch, echo)
+                # For uploads, we usually don't change speed unless asked, but effects are applied
+                processed = apply_audio_effects(sound, pitch, echo, speed, mastering)
                 
                 out_io = io.BytesIO()
                 processed.export(out_io, format="mp3")
