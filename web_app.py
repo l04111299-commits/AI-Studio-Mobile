@@ -4,11 +4,14 @@ import edge_tts
 from pydub import AudioSegment, effects
 import io
 import os
-import webbrowser
+from groq import Groq
 
-st.set_page_config(page_title="AI Super Studio & Jarvis", page_icon="🎙️", layout="wide")
+# --- Groq Setup (Aapki API Key) ---
+client = Groq(api_key="Gsk_uMvdF5TgK8Qxds9W3CceWGdyb3FY3Ji7jT3we7KL4f86Tmdno8hW")
 
-# --- Audio Engine ---
+st.set_page_config(page_title="AI Super Studio & Jarvis Pro", page_icon="🎙️", layout="wide")
+
+# --- Audio Effects Engine ---
 def apply_audio_effects(audio_segment, pitch_val, echo_val, speed_val, is_mastering):
     if speed_val != 0:
         new_sample_rate = int(audio_segment.frame_rate * (1 + speed_val/100))
@@ -26,7 +29,13 @@ def apply_audio_effects(audio_segment, pitch_val, echo_val, speed_val, is_master
         audio_segment = effects.normalize(audio_segment)
     return audio_segment
 
-# --- Voice Database ---
+# --- Sidebar Controls ---
+st.sidebar.header("🎚️ Master Sound Settings")
+speed = st.sidebar.select_slider("Speed:", options=[-25, -15, 0, 10, 20], value=0)
+pitch = st.sidebar.select_slider("Pitch (Bhari/Halki):", options=[-15, -10, 0, 10, 15], value=-10)
+echo = st.sidebar.slider("Echo Level:", 0, 10, 3)
+mastering = st.sidebar.checkbox("Auto-Mastering", value=True)
+
 voices = {
     "👦 Male (Madhur)": "hi-IN-MadhurNeural",
     "👧 Female (Swara)": "hi-IN-SwaraNeural",
@@ -35,75 +44,61 @@ voices = {
     "🎙️ Movie Narrator": "en-US-GuyNeural"
 }
 
-# --- Sidebar Controls ---
-st.sidebar.header("🎚️ Master Controls")
-speed = st.sidebar.select_slider("Speed:", options=[-25, -15, 0, 10, 20], value=0)
-pitch = st.sidebar.select_slider("Pitch:", options=[-15, -10, 0, 10, 15], value=-10)
-echo = st.sidebar.slider("Echo Level:", 0, 10, 3)
-mastering = st.sidebar.checkbox("Auto-Mastering", value=True)
+# --- Tabs ---
+tab1, tab2, tab3, tab4 = st.tabs(["✍️ TTS", "👥 Dialogue Mixer", "📁 Editor", "🤖 JARVIS BRAIN"])
 
-# --- Main Tabs ---
-tab1, tab2, tab3, tab4 = st.tabs(["✍️ TTS", "👥 Dialogue", "📁 Editor", "🤖 JARVIS AI"])
-
-# --- TAB 4: JARVIS (New Feature) ---
-with tab4:
-    st.subheader("🤖 Jarvis Voice Assistant")
-    st.write("Jarvis se baatein karein ya commands dein.")
-    
-    # Mobile par Speech recognition ke liye text input hi best hai
-    user_input = st.text_input("Jarvis ko Order dein (e.g., 'Open YouTube' ya 'Kaise ho?'):")
-    
-    if st.button("Submit to Jarvis"):
-        if user_input:
-            query = user_input.lower()
-            response_text = ""
-            
-            # 1. Automation Logic
-            if "youtube" in query:
-                response_text = "Boss, YouTube khul raha hai."
-                st.markdown("[Click here to Open YouTube](https://www.youtube.com)")
-            elif "google" in query:
-                response_text = "Boss, Google open kar raha hoon."
-                st.markdown("[Click here to Open Google](https://www.google.com)")
-            elif "kaise ho" in query or "hello" in query:
-                response_text = "Main bilkul theek hoon Boss, aap batayein main aapki kya madad kar sakta hoon?"
-            else:
-                response_text = f"Boss, aapne kaha: {user_input}. Main abhi is par kaam kar raha hoon."
-
-            # 2. Jarvis Voice Output (Using edge-tts for Mobile)
-            with st.spinner("Jarvis is thinking..."):
-                communicate = edge_tts.Communicate(response_text, "hi-IN-MadhurNeural")
-                temp_j = "jarvis_reply.mp3"
-                asyncio.run(communicate.save(temp_j))
-                
-                # Apply Jarvis Voice Style (Bhari Voice)
-                j_sound = AudioSegment.from_file(temp_j)
-                j_proc = apply_audio_effects(j_sound, -12, 2, 0, True) # Fixed Jarvis style
-                
-                out_j = io.BytesIO()
-                j_proc.export(out_io := io.BytesIO(), format="mp3")
-                st.audio(out_io)
-                st.write(f"🤖 Jarvis: {response_text}")
-                os.remove(temp_j)
-
-# --- (Baki Tab 1, 2, 3 ka purana code waisa hi rahega) ---
+# --- TAB 1, 2, 3 (Pehle Wala Professional Code) ---
 with tab1:
-    script = st.text_area("TTS Script:")
+    script = st.text_area("Script Likhein (--- for Bulk):")
     v_choice = st.selectbox("Voice:", list(voices.keys()))
     if st.button("Generate TTS"):
-        if script:
-            communicate = edge_tts.Communicate(script, voices[v_choice])
-            asyncio.run(communicate.save("t.mp3"))
-            s = apply_audio_effects(AudioSegment.from_file("t.mp3"), pitch, echo, speed, mastering)
+        parts = [s.strip() for s in script.split("---") if s.strip()]
+        for i, p_text in enumerate(parts):
+            communicate = edge_tts.Communicate(p_text, voices[v_choice])
+            asyncio.run(communicate.save(f"t_{i}.mp3"))
+            s = apply_audio_effects(AudioSegment.from_file(f"t_{i}.mp3"), pitch, echo, speed, mastering)
             st.audio(s.export(io.BytesIO(), format="mp3"))
+            os.remove(f"t_{i}.mp3")
 
-with tab2:
-    st.write("Dialogue Mixer Feature Active.")
-    # (Dialogue mixer logic yahan paste karein jo pehle di thi)
+# --- TAB 4: JARVIS (WITH GROQ AI BRAIN) ---
+with tab4:
+    st.subheader("🤖 Jarvis: Super AI Mode")
+    st.info("Aap Roman Urdu ya English mein kuch bhi pooch sakte hain.")
+    
+    user_query = st.text_input("Jarvis se Baat Karein:", placeholder="Boss, main aapki kya madad karoon?")
+    
+    if st.button("Poochhen Jarvis se") or (user_query and st.session_state.get('last_query') != user_query):
+        st.session_state['last_query'] = user_query
+        
+        if user_query:
+            # 1. Groq AI Response (Llama 3)
+            try:
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": "You are Jarvis, a highly intelligent AI assistant. Speak in Roman Urdu/Hindi. Be brief, professional, and helpful. Call the user 'Boss'."},
+                        {"role": "user", "content": user_query}
+                    ],
+                    model="llama3-8b-8192",
+                )
+                reply_text = chat_completion.choices[0].message.content
+            except Exception as e:
+                reply_text = "Boss, server mein thora masla hai, par main sun raha hoon."
 
-with tab3:
-    up = st.file_uploader("Upload Audio")
-    if up:
-        s = apply_audio_effects(AudioSegment.from_file(up), pitch, echo, speed, mastering)
-        st.audio(s.export(io.BytesIO(), format="mp3"))
+            # 2. Automation Check (If user says YouTube etc)
+            if "youtube" in user_query.lower():
+                st.link_button("Open YouTube", "https://www.youtube.com")
+            
+            # 3. Jarvis Voice Output
+            with st.spinner("Jarvis is speaking..."):
+                communicate = edge_tts.Communicate(reply_text, "hi-IN-MadhurNeural")
+                asyncio.run(communicate.save("j_reply.mp3"))
+                
+                # Jarvis ki signature bhari awaz
+                j_audio = AudioSegment.from_file("j_reply.mp3")
+                j_proc = apply_audio_effects(j_audio, -15, 2, 0, True) 
+                
+                st.audio(j_proc.export(io.BytesIO(), format="mp3"))
+                st.write(f"🤖 **Jarvis:** {reply_text}")
+                os.remove("j_reply.mp3")
+
 
