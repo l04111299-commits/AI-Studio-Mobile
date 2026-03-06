@@ -9,23 +9,27 @@ import requests
 
 st.set_page_config(page_title="AI Studio Pro", page_icon="🎙️", layout="wide")
 
-# --- Persistent API Key Logic ---
-if "api_key" not in st.session_state:
-    st.session_state.api_key = "Gsk_uMvdF5TgK8Qxds9W3CceWGdyb3FY3Ji7jT3we7KL4f86Tmdno8hW" # Default Key
+# --- Streamlit Secrets Logic ---
+# Code mein ab API key nahi likhi, ye dashboard se uthayega
+try:
+    if "GROQ_API_KEY" in st.secrets:
+        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    else:
+        st.warning("⚠️ GROQ_API_KEY Streamlit Secrets mein nahi mili. Sidebar use karein.")
+        # Backup: Agar secrets kaam na karein to manual key ka option
+        if "api_key" not in st.session_state:
+            st.session_state.api_key = ""
+        client = Groq(api_key=st.session_state.api_key)
+except Exception as e:
+    st.error("Groq Client initialize nahi ho saka.")
 
-# Sidebar for Key Management
+# Sidebar for Manual Key (Just in case)
 with st.sidebar:
     st.header("🔑 API Settings")
-    new_key = st.text_input("Groq API Key (If expired):", value=st.session_state.api_key, type="password")
+    manual_key = st.text_input("Nayi API Key yahan dalein:", type="password")
     if st.button("Update Key"):
-        st.session_state.api_key = new_key
-        st.success("Key Updated!")
-
-# Initialize Groq Client
-try:
-    client = Groq(api_key=st.session_state.api_key)
-except:
-    st.error("Invalid API Key format!")
+        st.session_state.api_key = manual_key
+        st.success("Key updated for this session!")
 
 # --- Audio Engine ---
 def apply_audio_effects(audio_segment, pitch_val, echo_val, speed_val, is_mastering):
@@ -78,7 +82,11 @@ with tab4:
     user_q = st.text_input("Talk to Jarvis:", key="j_input")
     if st.button("Submit Order") and user_q:
         try:
-            chat_completion = client.chat.completions.create(
+            # Re-init client with correct key
+            current_key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.api_key
+            active_client = Groq(api_key=current_key)
+            
+            chat_completion = active_client.chat.completions.create(
                 messages=[{"role": "system", "content": "You are Jarvis. Speak Roman Urdu. Call user Boss."},
                           {"role": "user", "content": user_q}],
                 model="llama3-8b-8192",
@@ -92,7 +100,7 @@ with tab4:
             st.audio(j_v.export(io.BytesIO(), format="mp3"))
             os.remove("j.mp3")
         except Exception as e:
-            st.error(f"Error Code 401: Key Expired! Please update key in Sidebar.")
+            st.error(f"Error: {str(e)}")
 
 with tab5:
     st.subheader("🎨 AI Image Gen")
@@ -101,6 +109,7 @@ with tab5:
         if prompt:
             url = f"https://pollinations.ai/p/{prompt.replace(' ', '%20')}?width=1024&height=1024&model=flux"
             st.image(url)
-            st.download_button("Download", requests.get(url).content, "image.jpg")
+            st.download_button("Download Image", requests.get(url).content, "image.jpg")
+
 
 
