@@ -6,6 +6,7 @@ import io
 import os
 from groq import Groq
 import requests
+import re
 
 # --- Page Config ---
 st.set_page_config(page_title="AI Mega Studio Pro", page_icon="🎙️", layout="wide")
@@ -20,10 +21,10 @@ try:
     else:
         client = Groq(api_key=st.session_state.api_key)
 except Exception:
-    st.sidebar.warning("⚠️ Groq Key missig!")
+    st.sidebar.warning("⚠️ Groq Key missing!")
 
 # --- Professional Audio Engine ---
-def apply_pro_effects(audio_segment, pitch_val, echo_val, speed_val):
+def apply_pro_effects(audio_segment, pitch_val, echo_val, speed_val, is_mastering):
     try:
         # Talk Speed
         if speed_val != 0:
@@ -31,7 +32,7 @@ def apply_pro_effects(audio_segment, pitch_val, echo_val, speed_val):
             audio_segment = audio_segment._spawn(audio_segment.raw_data, overrides={'frame_rate': new_rate})
             audio_segment = audio_segment.set_frame_rate(44100)
         
-        # Voice Depth (Pitch) - Spotify Style
+        # Voice Depth (Pitch)
         if pitch_val != 0:
             new_sample_rate = int(audio_segment.frame_rate * (2.0 ** (pitch_val / 12.0)))
             audio_segment = audio_segment._spawn(audio_segment.raw_data, overrides={'frame_rate': new_sample_rate})
@@ -43,25 +44,30 @@ def apply_pro_effects(audio_segment, pitch_val, echo_val, speed_val):
             echo = audio_segment - (30 - echo_val)
             audio_segment = audio_segment.overlay(echo, position=delay)
             
-        # Mastering: Normalize for clean sound
-        audio_segment = effects.normalize(audio_segment)
+        # --- AUTO MASTERING FEATURE (RESTORED) ---
+        if is_mastering:
+            audio_segment = effects.normalize(audio_segment)
+        
         return audio_segment
     except Exception:
         return audio_segment
 
-# --- Sidebar (Error-Proof Sliders) ---
-st.sidebar.header("🔑 Settings & Pro Audio")
+# --- Sidebar Controls ---
+st.sidebar.header("🎚️ Sound & API Controls")
 with st.sidebar.expander("API Key Management"):
     new_k = st.text_input("Manual Key:", type="password")
-    if st.button("Update"):
+    if st.button("Update Key"):
         st.session_state.api_key = new_k
 
 st.sidebar.divider()
 
-# Sliders FIX: Options aur Value strictly matched
+# Audio Sliders
 p_val = st.sidebar.select_slider("Voice Depth (Pitch):", options=[-10, -5, 0, 5, 10], value=-5)
 e_val = st.sidebar.slider("Reverb (Echo):", 0, 5, 1)
 s_val = st.sidebar.select_slider("Talk Speed:", options=[-10, 0, 10, 20], value=0)
+
+# Auto Mastering Checkbox (RESTORED)
+mastering_on = st.sidebar.checkbox("Auto-Mastering (Clean Sound)", value=True)
 
 voices = {
     "👦 Male": "hi-IN-MadhurNeural",
@@ -70,112 +76,92 @@ voices = {
     "🎙️ Movie Narrator": "en-US-GuyNeural"
 }
 
-# --- Main Tabs (All features restored) ---
+# --- Main Tabs ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["✍️ TTS", "👥 Dialogue Mixer", "📁 Editor", "🤖 JARVIS AI", "🎨 IMAGE GEN"])
 
 # --- TAB 1: Bulk TTS ---
 with tab1:
-    st.subheader("✍️ Bulk Text to Speech (Parts separated by ---)")
-    script = st.text_area("Script Likhein (e.g., Hello Boss --- Welcome):", height=200)
-    v_choice = st.radio("Voice Style Select Karein:", list(voices.keys()), horizontal=True)
+    st.subheader("✍️ Bulk Text to Speech")
+    script = st.text_area("Script Likhein (Split with ---):", height=200, key="tts_f")
+    v_choice = st.radio("Voice Style:", list(voices.keys()), horizontal=True)
     
-    if st.button("Generate TTS"):
+    if st.button("Generate TTS", key="btn_tts"):
         if script:
             parts = [s.strip() for s in script.split("---") if s.strip()]
             for i, p_text in enumerate(parts):
-                with st.spinner(f"Processing Part {i+1}..."):
+                with st.spinner(f"Part {i+1} generating..."):
                     communicate = edge_tts.Communicate(p_text, voices[v_choice])
-                    asyncio.run(communicate.save(f"part_{i}.mp3"))
-                    
-                    raw_audio = AudioSegment.from_file(f"part_{i}.mp3")
-                    final_audio = apply_pro_effects(raw_audio, p_val, e_val, s_val)
-                    
-                    st.audio(final_audio.export(io.BytesIO(), format="mp3"))
-                    os.remove(f"part_{i}.mp3")
+                    asyncio.run(communicate.save(f"t_{i}.mp3"))
+                    raw = AudioSegment.from_file(f"t_{i}.mp3")
+                    final = apply_pro_effects(raw, p_val, e_val, s_val, mastering_on)
+                    st.audio(final.export(io.BytesIO(), format="mp3"))
+                    os.remove(f"t_{i}.mp3")
 
 # --- TAB 2: Dialogue Mixer ---
 with tab2:
-    st.subheader("👥 Multi-Voice Dialogue Mixer")
-    st.info("Line 1 Male, Line 2 Female (Separated by ---)")
-    mix_script = st.text_area("Dialogues Likhein:", placeholder="e.g., Kahan ja rahe ho? --- Gher ja rahi hun!")
-    
-    if st.button("Mix Dialogues"):
-        if mix_script:
-            lines = [l.strip() for l in mix_script.split("---") if l.strip()]
-            combined = AudioSegment.empty()
-            for idx, line in enumerate(lines):
-                # Alternate between Male and Female
-                vid = voices["👦 Male"] if idx % 2 == 0 else voices["👧 Female"]
-                communicate = edge_tts.Communicate(line, vid)
-                asyncio.run(communicate.save("mix.mp3"))
-                segment = apply_pro_effects(AudioSegment.from_file("mix.mp3"), p_val, e_val, s_val)
-                combined += segment + AudioSegment.silent(duration=500)
-                os.remove("mix.mp3")
-            st.audio(combined.export(io.BytesIO(), format="mp3"))
+    st.subheader("👥 Multi-Voice Mixer")
+    mix_script = st.text_area("Lines (Line 1 Male --- Line 2 Female):", key="mix_f")
+    if st.button("Mix Voices", key="btn_mix"):
+        lines = [l.strip() for l in mix_script.split("---") if l.strip()]
+        combined = AudioSegment.empty()
+        for idx, line in enumerate(lines):
+            vid = voices["👦 Male"] if idx % 2 == 0 else voices["👧 Female"]
+            communicate = edge_tts.Communicate(line, vid)
+            asyncio.run(communicate.save("m.mp3"))
+            segment = apply_pro_effects(AudioSegment.from_file("m.mp3"), p_val, e_val, s_val, mastering_on)
+            combined += segment + AudioSegment.silent(duration=500)
+            os.remove("m.mp3")
+        st.audio(combined.export(io.BytesIO(), format="mp3"))
 
-# --- TAB 3: Audio Editor ---
+# --- TAB 3: Editor ---
 with tab3:
-    st.subheader("📁 Pro Effects Editor")
-    up_file = st.file_uploader("Audio File Upload Karein:", type=["mp3", "wav"])
-    if up_file and st.button("Apply Sidebar Effects"):
-        raw_ed = AudioSegment.from_file(up_file)
-        final_ed = apply_pro_effects(raw_ed, p_val, e_val, s_val)
-        st.audio(final_ed.export(io.BytesIO(), format="mp3"))
+    st.subheader("📁 Audio Effects Editor")
+    up = st.file_uploader("Upload Audio:", type=["mp3", "wav"], key="edit_f")
+    if up and st.button("Apply Effects", key="btn_edit"):
+        processed = apply_pro_effects(AudioSegment.from_file(up), p_val, e_val, s_val, mastering_on)
+        st.audio(processed.export(io.BytesIO(), format="mp3"))
 
-# --- TAB 4: JARVIS (Speech & Art Ability restored) ---
+# --- TAB 4: JARVIS AI (Speech & Image Gen) ---
 with tab4:
-    st.subheader("🤖 Jarvis Assistant (Updated Pro Model)")
-    j_voice_type = st.selectbox("Jarvis Voice Chunain:", ["Narrator (Deep)", "Urdu Male Professional", "Standard Male Hindi"])
-    j_v_map = {"Narrator (Deep)": "en-US-GuyNeural", "Urdu Male Professional": "ur-PK-AsadNeural", "Standard Male Hindi": "hi-IN-MadhurNeural"}
-
-    user_query = st.text_input("Ask Jarvis:", key="jarvis_v3_final")
+    st.subheader("🤖 Jarvis Assistant (Speech & Art)")
+    j_voice = st.selectbox("Jarvis Voice:", ["Narrator", "Urdu", "Hindi"], key="jv_f")
+    j_map = {"Narrator": "en-US-GuyNeural", "Urdu": "ur-PK-AsadNeural", "Hindi": "hi-IN-MadhurNeural"}
     
-    # System Prompt for Art Gen Logic
-    sys_instruction = "You are Jarvis. Speak Roman Urdu beautifully. If Boss asks to create an image, reply with text first, then end with 'AI_IMAGE_PROMPT: (precise English description)'."
+    user_q = st.text_input("Ask Jarvis:", key="jq_f")
+    sys_prompt = "You are Jarvis. Speak Roman Urdu. If Boss asks for an image, add 'AI_IMAGE_PROMPT: (English prompt)' at the end."
 
-    if st.button("Submit Order"):
-        if user_query:
-            try:
-                chat_res = client.chat.completions.create(
-                    messages=[{"role": "system", "content": sys_instruction}, {"role": "user", "content": user_query}],
-                    model="llama-3.3-70b-versatile",
-                )
-                full_ans = chat_res.choices[0].message.content
-                
-                # Split text and image prompt
-                text_ans = full_ans.split("AI_IMAGE_PROMPT:")[0]
-                st.write(f"🤖 **Jarvis:** {text_ans}")
-                
-                # Audio with Pro Mastering
-                communicate = edge_tts.Communicate(text_ans, j_v_map[j_voice_type])
-                asyncio.run(communicate.save("j.mp3"))
-                j_raw = AudioSegment.from_file("j.mp3")
-                # Pitch -5 se robotic awaz khatam ho jayegi
-                j_final = apply_pro_effects(j_raw, p_val, e_val, s_val)
-                st.audio(j_final.export(io.BytesIO(), format="mp3"))
-                os.remove("j.mp3")
-                
-                # Image Logic
-                if "AI_IMAGE_PROMPT:" in full_ans:
-                    with st.spinner("AI Art bana raha hai..."):
-                        img_prompt = full_ans.split("AI_IMAGE_PROMPT:")[1].strip()
-                        img_url = f"https://pollinations.ai/p/{img_prompt.replace(' ', '%20')}?width=1024&height=1024&seed=42&model=flux"
-                        st.image(img_url, caption="Jarvis Generated Art", use_container_width=True)
-                        img_data = requests.get(img_url).content
-                        st.download_button("⬇️ Download Art", img_data, "jarvis_art.jpg")
-                        
-            except Exception as e:
-                st.error(f"Error: {e}")
+    if st.button("Submit", key="btn_j"):
+        if user_q:
+            res = client.chat.completions.create(
+                messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_q}],
+                model="llama-3.3-70b-versatile",
+            )
+            ans = res.choices[0].message.content
+            text_only = ans.split("AI_IMAGE_PROMPT:")[0].strip()
+            st.write(f"🤖 **Jarvis:** {text_only}")
+            
+            # Audio
+            communicate = edge_tts.Communicate(text_only, j_map[j_voice])
+            asyncio.run(communicate.save("j.mp3"))
+            j_audio = apply_pro_effects(AudioSegment.from_file("j.mp3"), p_val, e_val, s_val, mastering_on)
+            st.audio(j_audio.export(io.BytesIO(), format="mp3"))
+            os.remove("j.mp3")
+            
+            # Image Gen
+            if "AI_IMAGE_PROMPT:" in ans:
+                img_p = re.sub(r'[^a-zA-Z0-9\s]', '', ans.split("AI_IMAGE_PROMPT:")[1])
+                img_url = f"https://pollinations.ai/p/{img_p.replace(' ', '%20')}?width=1024&height=1024&model=flux"
+                st.image(img_url, caption="Jarvis Art")
+                st.download_button("Download", requests.get(img_url).content, "art.jpg", key="dl_j")
 
-# --- TAB 5: Image Generation (Direct Mode restored) ---
+# --- TAB 5: Image Generation ---
 with tab5:
-    st.subheader("🎨 Direct AI Image Gen")
-    p_direct = st.text_input("Tasveer ka idea likhein (English):", key="img_v3_final")
-    if st.button("Generate Image"):
-        if p_direct:
-            with st.spinner("AI Tasveer bana raha hai..."):
-                url_direct = f"https://pollinations.ai/p/{p_direct.replace(' ', '%20')}?width=1024&height=1024&model=flux"
-                st.image(url_direct, use_container_width=True)
-                img_data_direct = requests.get(url_direct).content
-                st.download_button("⬇️ Download Image", img_data_direct, "ai_image.jpg")
+    st.subheader("🎨 Direct Image Gen")
+    p_direct = st.text_input("English Prompt:", key="id_f")
+    if st.button("Generate Art", key="btn_id"):
+        clean_p = re.sub(r'[^a-zA-Z0-9\s]', '', p_direct).replace(' ', '%20')
+        url = f"https://pollinations.ai/p/{clean_p}?width=1024&height=1024&model=flux"
+        st.image(url)
+        st.download_button("Download", requests.get(url).content, "image.jpg", key="dl_id")
+
 
