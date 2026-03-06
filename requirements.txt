@@ -2,6 +2,7 @@ streamlit
 edge-tts
 pydub
 groq
+requests
 
 
 
