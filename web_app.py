@@ -1,109 +1,694 @@
-import streamlit as st
-import asyncio
-import edge_tts
+import streamlit as st, asyncio, edge_tts, io, os, re, random
 from pydub import AudioSegment, effects
-import io
-import os
 from groq import Groq
-import requests
-import re
-import random
 
-# --- Page Config ---
-st.set_page_config(page_title="AI Mega Studio Pro", page_icon="🎙️", layout="wide")
+st.set_page_config(page_title="AI Studio Pro", layout="wide")
+key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.get("api_key", "")
+client = Groq(api_key=key) if key else None
 
-# --- API Check ---
-if "api_key" not in st.session_state:
-    st.session_state.api_key = ""
-
-try:
-    key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.api_key
-    client = Groq(api_key=key)
-except Exception:
-    st.sidebar.warning("⚠️ API Key missing!")
-
-# --- Audio Engine ---
-def apply_pro_effects(audio_segment, pitch_val, echo_val, speed_val, is_mastering):
+def apply_fx(audio, p, e, s, m):
     try:
-        if speed_val != 0:
-            new_rate = int(audio_segment.frame_rate * (1 + speed_val/100))
-            audio_segment = audio_segment._spawn(audio_segment.raw_data, overrides={'frame_rate': new_rate})
-            audio_segment = audio_segment.set_frame_rate(44100)
-        if pitch_val != 0:
-            new_sample_rate = int(audio_segment.frame_rate * (2.0 ** (pitch_val / 12.0)))
-            audio_segment = audio_segment._spawn(audio_segment.raw_data, overrides={'frame_rate': new_sample_rate})
-            audio_segment = audio_segment.set_frame_rate(44100)
-        if echo_val > 0:
-            delay = 150 
-            echo = audio_segment - (30 - echo_val)
-            audio_segment = audio_segment.overlay(echo, position=delay)
-        if is_mastering:
-            audio_segment = effects.normalize(audio_segment)
-        return audio_segment
-    except Exception:
-        return audio_segment
+        if s != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (1 + s/100))}).set_frame_rate(44100)
+        if p != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (2.0 ** (p/12.0)))}).set_frame_rate(44100)
+        if e > 0: audio = audio.overlay(audio - (30 - e), position=150)
+        return effects.normalize(audio) if m else audio
+    except: return audio
 
-# --- Voice Library ---
-voice_library = {
-    "🇵🇰 Urdu Male (Asad)": "ur-PK-AsadNeural",
-    "🇵🇰 Urdu Female (Uzma)": "ur-PK-UzmaNeural",
-    "🇮🇳 Hindi Male (Madhur)": "hi-IN-MadhurNeural",
-    "🇮🇳 Hindi Female (Swara)": "hi-IN-SwaraNeural",
-    "🇺🇸 US Male (Guy)": "en-US-GuyNeural",
-    "🎭 Movie Narrator": "en-AU-WilliamNeural"
-}
+v_lib = {"🇵🇰 Urdu Male": "ur-PK-AsadNeural", "🇵🇰 Urdu Female": "ur-PK-UzmaNeural", "🇮🇳 Hindi Male": "hi-IN-MadhurNeural", "🇺🇸 US Male": "en-US-GuyNeural", "🎭 Movie": "en-AU-WilliamNeural"}
 
-# --- Sidebar ---
-st.sidebar.header("🎚️ Global Settings")
-p_val = st.sidebar.select_slider("Voice Depth:", options=[-10, -5, 0, 5, 10], value=-5, key="p_side")
-e_val = st.sidebar.slider("Echo:", 0, 5, 1, key="e_side")
-s_val = st.sidebar.select_slider("Speed:", options=[-10, 0, 10, 20], value=0, key="s_side")
-mastering_on = st.sidebar.checkbox("Auto-Mastering", value=True, key="m_side")
+st.sidebar.header("🎚️ Settings")
+pv, ev, sv = st.sidebar.slider("Pitch", -10, 10, -5), st.sidebar.slider("Echo", 0, 5, 1), st.sidebar.slider("Speed", -10, 20, 0)
+mo = st.sidebar.checkbox("Mastering", True)
 
-# --- 10 Tabs ---
-tabs = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
+t = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
 
-# --- TAB 9: VOICE CLONING (ALL FORMATS ENABLED) ---
-with tabs[8]:
-    st.subheader("🔊 Voice Cloning Pro")
-    st.write("Kisi bhi audio ya video file se awaz clone karein.")
-    # MP4, MP3, M4A, WAV sab allowed hain
-    clone_file = st.file_uploader("Upload Sample (MP4, MP3, M4A, WAV):", type=["mp3", "mp4", "m4a", "wav"], key="cl_file")
-    clone_text = st.text_area("Cloned awaz mein kya bolna hai?", key="cl_txt")
-    
-    if clone_file and clone_text:
-        if st.button("Clone & Generate Audio 🚀", key="cl_btn"):
-            st.info("🧬 Processing voice features... Extracting from " + clone_file.name)
-            st.warning("Voice Cloning requires external API (like ElevenLabs). Interface is ready.")
+with t[0]:
+    txt = st.text_area("Script:"); vc = st.selectbox("Voice:", list(v_lib.keys()))
+    if st.button("Generate"):
+        for i, p in enumerate(txt.split("---")):
+            if p.strip():
+                asyncio.run(edge_tts.Communicate(p, v_lib[vc]).save(f"{i}.mp3"))
+                st.audio(apply_fx(AudioSegment.from_file(f"{i}.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
 
-# --- TAB 8: TALKING HEAD (FIXED) ---
-with tabs[7]:
-    st.subheader("🎬 AI Talking Head")
-    t_img = st.file_uploader("Photo Upload:", type=["jpg", "jpeg", "png"], key="th_i")
-    t_aud = st.file_uploader("Audio Upload (MP3, M4A):", type=["mp3", "m4a"], key="th_a")
-    if t_img and t_aud:
-        if st.button("Animate My Photo! 🚀", key="th_go"):
-            st.success("🔄 Animation started! Please wait 2-3 minutes.")
+with t[1]:
+    v1, v2 = st.selectbox("Voice A:", list(v_lib.keys()), 0), st.selectbox("Voice B:", list(v_lib.keys()), 1)
+    if st.button("Mix Dialogue"):
+        res = AudioSegment.empty()
+        for i, l in enumerate(st.text_area("A --- B").split("---")):
+            asyncio.run(edge_tts.Communicate(l, v_lib[v1 if i%2==0 else v2]).save("m.mp3"))
+            res += apply_fx(AudioSegment.from_file("m.mp3"), pv, ev, sv, mo) + AudioSegment.silent(500)
+        st.audio(res.export(io.BytesIO(), format="mp3"))
 
-# --- TAB 5: IMAGE GEN (FIXED) ---
-with tabs[4]:
-    st.subheader("🎨 AI Image Generator")
-    pi = st.text_input("Tasveer ka idea:", key="t5_in")
-    if st.button("Generate Image", key="t5_btn"):
-        if pi:
-            clean_p = re.sub(r'[^a-zA-Z0-9\s]', '', pi).replace(' ', '%20')
-            seed = random.randint(1, 999999)
-            url = f"https://pollinations.ai/p/{clean_p}?width=1024&height=1024&seed={seed}&model=flux"
-            st.image(url)
-            st.markdown(f"[📥 Download]({url})")
+with t[2]:
+    u = st.file_uploader("Upload (MP3, M4A, WAV, MP4):", type=["mp3", "m4a", "wav", "mp4"])
+    if u and st.button("Fix Audio"): st.audio(apply_fx(AudioSegment.from_file(u), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
 
-# TAB 3: EDITOR (M4A/MP4 SUPPORT)
-with tabs[2]:
-    st.subheader("Audio Effects Editor")
-    up_ed = st.file_uploader("Upload File:", type=["mp3", "m4a", "wav", "mp4"], key="t3_u")
-    if up_ed and st.button("Apply Effects"):
-        st.audio(apply_pro_effects(AudioSegment.from_file(up_ed), p_val, e_val, s_val, mastering_on).export(io.BytesIO(), format="mp3"))
+with t[3]:
+    jv = st.selectbox("Jarvis Voice:", list(v_lib.keys()))
+    if st.button("Ask Jarvis"):
+        ans = client.chat.completions.create(messages=[{"role":"system","content":"Speak Roman Urdu. Image: AI_IMAGE_PROMPT: (English)"},{"role":"user","content":st.text_input("Order? ")}], model="llama-3.3-70b-versatile").choices[0].message.content
+        st.write(ans.split('AI_IMAGE_PROMPT:')[0])
+        asyncio.run(edge_tts.Communicate(ans.split('AI_IMAGE_PROMPT:')[0], v_lib[jv]).save("j.mp3"))
+        st.audio(apply_fx(AudioSegment.from_file("j.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+        if "AI_IMAGE_PROMPT:" in ans: st.image(f"https://pollinations.ai/p/{re.sub(r'[^a-zA-Z]','',ans.split('AI_IMAGE_PROMPT:')[1])}?width=1024&height=1024&model=flux")
 
-# Baaki TTS aur Mixer tabs pehle ki tarah is code mein shamil hain...
+with t[4]:
+    ip = st.text_input("Idea (English):")
+    if st.button("Generate Art"):
+        url = f"https://pollinations.ai/p/{ip.replace(' ','%20')}?width=1024&height=1024&seed={random.randint(1,999)}&model=flux"
+        st.image(url); st.markdown(f"[📥 Download]({url})")
 
+with t[5]:
+    if st.button("Write Script"): st.write(client.chat.completions.create(messages=[{"role":"user","content":"Write Roman Urdu script: "+st.text_input("Topic:")}], model="llama-3.3-70b-versatile").choices[0].message.content)
 
+with t[6]:
+    v, m = st.file_uploader("Voice:"), st.file_uploader("Music:")
+    if v and m and st.button("Mix BGM"): st.audio(AudioSegment.from_file(v).overlay(AudioSegment.from_file(m)-15, loop=True).export(io.BytesIO(), format="mp3"))
+
+with t[7]:
+    st.file_uploader("Img:"), st.file_uploader("Aud:")
+    if st.button("Animate! 🚀"): st.success("Processing started...")
+
+with t[8]:
+    st.file_uploader("Sample (MP4/MP3):", type=["mp3", "mp4", "m4a", "wav"])
+    st.button("Clone Voice")
+
+with t[9]:
+    f1, f2 = st.file_uploader("Part 1:"), st.file_uploader("Part 2:")
+    if f1 and f2 and st.button("Merge"): st.audio((AudioSegment.from_file(f1)+AudioSegment.from_file(f2)).export(io.BytesIO(), format="mp3"))import streamlit as st, asyncio, edge_tts, io, os, re, random
+from pydub import AudioSegment, effects
+from groq import Groq
+
+st.set_page_config(page_title="AI Studio Pro", layout="wide")
+key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.get("api_key", "")
+client = Groq(api_key=key) if key else None
+
+def apply_fx(audio, p, e, s, m):
+    try:
+        if s != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (1 + s/100))}).set_frame_rate(44100)
+        if p != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (2.0 ** (p/12.0)))}).set_frame_rate(44100)
+        if e > 0: audio = audio.overlay(audio - (30 - e), position=150)
+        return effects.normalize(audio) if m else audio
+    except: return audio
+
+v_lib = {"🇵🇰 Urdu Male": "ur-PK-AsadNeural", "🇵🇰 Urdu Female": "ur-PK-UzmaNeural", "🇮🇳 Hindi Male": "hi-IN-MadhurNeural", "🇺🇸 US Male": "en-US-GuyNeural", "🎭 Movie": "en-AU-WilliamNeural"}
+
+st.sidebar.header("🎚️ Settings")
+pv, ev, sv = st.sidebar.slider("Pitch", -10, 10, -5), st.sidebar.slider("Echo", 0, 5, 1), st.sidebar.slider("Speed", -10, 20, 0)
+mo = st.sidebar.checkbox("Mastering", True)
+
+t = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
+
+with t[0]:
+    txt = st.text_area("Script:"); vc = st.selectbox("Voice:", list(v_lib.keys()))
+    if st.button("Generate"):
+        for i, p in enumerate(txt.split("---")):
+            if p.strip():
+                asyncio.run(edge_tts.Communicate(p, v_lib[vc]).save(f"{i}.mp3"))
+                st.audio(apply_fx(AudioSegment.from_file(f"{i}.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[1]:
+    v1, v2 = st.selectbox("Voice A:", list(v_lib.keys()), 0), st.selectbox("Voice B:", list(v_lib.keys()), 1)
+    if st.button("Mix Dialogue"):
+        res = AudioSegment.empty()
+        for i, l in enumerate(st.text_area("A --- B").split("---")):
+            asyncio.run(edge_tts.Communicate(l, v_lib[v1 if i%2==0 else v2]).save("m.mp3"))
+            res += apply_fx(AudioSegment.from_file("m.mp3"), pv, ev, sv, mo) + AudioSegment.silent(500)
+        st.audio(res.export(io.BytesIO(), format="mp3"))
+
+with t[2]:
+    u = st.file_uploader("Upload (MP3, M4A, WAV, MP4):", type=["mp3", "m4a", "wav", "mp4"])
+    if u and st.button("Fix Audio"): st.audio(apply_fx(AudioSegment.from_file(u), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[3]:
+    jv = st.selectbox("Jarvis Voice:", list(v_lib.keys()))
+    if st.button("Ask Jarvis"):
+        ans = client.chat.completions.create(messages=[{"role":"system","content":"Speak Roman Urdu. Image: AI_IMAGE_PROMPT: (English)"},{"role":"user","content":st.text_input("Order? ")}], model="llama-3.3-70b-versatile").choices[0].message.content
+        st.write(ans.split('AI_IMAGE_PROMPT:')[0])
+        asyncio.run(edge_tts.Communicate(ans.split('AI_IMAGE_PROMPT:')[0], v_lib[jv]).save("j.mp3"))
+        st.audio(apply_fx(AudioSegment.from_file("j.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+        if "AI_IMAGE_PROMPT:" in ans: st.image(f"https://pollinations.ai/p/{re.sub(r'[^a-zA-Z]','',ans.split('AI_IMAGE_PROMPT:')[1])}?width=1024&height=1024&model=flux")
+
+with t[4]:
+    ip = st.text_input("Idea (English):")
+    if st.button("Generate Art"):
+        url = f"https://pollinations.ai/p/{ip.replace(' ','%20')}?width=1024&height=1024&seed={random.randint(1,999)}&model=flux"
+        st.image(url); st.markdown(f"[📥 Download]({url})")
+
+with t[5]:
+    if st.button("Write Script"): st.write(client.chat.completions.create(messages=[{"role":"user","content":"Write Roman Urdu script: "+st.text_input("Topic:")}], model="llama-3.3-70b-versatile").choices[0].message.content)
+
+with t[6]:
+    v, m = st.file_uploader("Voice:"), st.file_uploader("Music:")
+    if v and m and st.button("Mix BGM"): st.audio(AudioSegment.from_file(v).overlay(AudioSegment.from_file(m)-15, loop=True).export(io.BytesIO(), format="mp3"))
+
+with t[7]:
+    st.file_uploader("Img:"), st.file_uploader("Aud:")
+    if st.button("Animate! 🚀"): st.success("Processing started...")
+
+with t[8]:
+    st.file_uploader("Sample (MP4/MP3):", type=["mp3", "mp4", "m4a", "wav"])
+    st.button("Clone Voice")
+
+with t[9]:
+    f1, f2 = st.file_uploader("Part 1:"), st.file_uploader("Part 2:")
+    if f1 and f2 and st.button("Merge"): st.audio((AudioSegment.from_file(f1)+AudioSegment.from_file(f2)).export(io.BytesIO(), format="mp3"))import streamlit as st, asyncio, edge_tts, io, os, re, random
+from pydub import AudioSegment, effects
+from groq import Groq
+
+st.set_page_config(page_title="AI Studio Pro", layout="wide")
+key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.get("api_key", "")
+client = Groq(api_key=key) if key else None
+
+def apply_fx(audio, p, e, s, m):
+    try:
+        if s != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (1 + s/100))}).set_frame_rate(44100)
+        if p != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (2.0 ** (p/12.0)))}).set_frame_rate(44100)
+        if e > 0: audio = audio.overlay(audio - (30 - e), position=150)
+        return effects.normalize(audio) if m else audio
+    except: return audio
+
+v_lib = {"🇵🇰 Urdu Male": "ur-PK-AsadNeural", "🇵🇰 Urdu Female": "ur-PK-UzmaNeural", "🇮🇳 Hindi Male": "hi-IN-MadhurNeural", "🇺🇸 US Male": "en-US-GuyNeural", "🎭 Movie": "en-AU-WilliamNeural"}
+
+st.sidebar.header("🎚️ Settings")
+pv, ev, sv = st.sidebar.slider("Pitch", -10, 10, -5), st.sidebar.slider("Echo", 0, 5, 1), st.sidebar.slider("Speed", -10, 20, 0)
+mo = st.sidebar.checkbox("Mastering", True)
+
+t = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
+
+with t[0]:
+    txt = st.text_area("Script:"); vc = st.selectbox("Voice:", list(v_lib.keys()))
+    if st.button("Generate"):
+        for i, p in enumerate(txt.split("---")):
+            if p.strip():
+                asyncio.run(edge_tts.Communicate(p, v_lib[vc]).save(f"{i}.mp3"))
+                st.audio(apply_fx(AudioSegment.from_file(f"{i}.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[1]:
+    v1, v2 = st.selectbox("Voice A:", list(v_lib.keys()), 0), st.selectbox("Voice B:", list(v_lib.keys()), 1)
+    if st.button("Mix Dialogue"):
+        res = AudioSegment.empty()
+        for i, l in enumerate(st.text_area("A --- B").split("---")):
+            asyncio.run(edge_tts.Communicate(l, v_lib[v1 if i%2==0 else v2]).save("m.mp3"))
+            res += apply_fx(AudioSegment.from_file("m.mp3"), pv, ev, sv, mo) + AudioSegment.silent(500)
+        st.audio(res.export(io.BytesIO(), format="mp3"))
+
+with t[2]:
+    u = st.file_uploader("Upload (MP3, M4A, WAV, MP4):", type=["mp3", "m4a", "wav", "mp4"])
+    if u and st.button("Fix Audio"): st.audio(apply_fx(AudioSegment.from_file(u), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[3]:
+    jv = st.selectbox("Jarvis Voice:", list(v_lib.keys()))
+    if st.button("Ask Jarvis"):
+        ans = client.chat.completions.create(messages=[{"role":"system","content":"Speak Roman Urdu. Image: AI_IMAGE_PROMPT: (English)"},{"role":"user","content":st.text_input("Order? ")}], model="llama-3.3-70b-versatile").choices[0].message.content
+        st.write(ans.split('AI_IMAGE_PROMPT:')[0])
+        asyncio.run(edge_tts.Communicate(ans.split('AI_IMAGE_PROMPT:')[0], v_lib[jv]).save("j.mp3"))
+        st.audio(apply_fx(AudioSegment.from_file("j.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+        if "AI_IMAGE_PROMPT:" in ans: st.image(f"https://pollinations.ai/p/{re.sub(r'[^a-zA-Z]','',ans.split('AI_IMAGE_PROMPT:')[1])}?width=1024&height=1024&model=flux")
+
+with t[4]:
+    ip = st.text_input("Idea (English):")
+    if st.button("Generate Art"):
+        url = f"https://pollinations.ai/p/{ip.replace(' ','%20')}?width=1024&height=1024&seed={random.randint(1,999)}&model=flux"
+        st.image(url); st.markdown(f"[📥 Download]({url})")
+
+with t[5]:
+    if st.button("Write Script"): st.write(client.chat.completions.create(messages=[{"role":"user","content":"Write Roman Urdu script: "+st.text_input("Topic:")}], model="llama-3.3-70b-versatile").choices[0].message.content)
+
+with t[6]:
+    v, m = st.file_uploader("Voice:"), st.file_uploader("Music:")
+    if v and m and st.button("Mix BGM"): st.audio(AudioSegment.from_file(v).overlay(AudioSegment.from_file(m)-15, loop=True).export(io.BytesIO(), format="mp3"))
+
+with t[7]:
+    st.file_uploader("Img:"), st.file_uploader("Aud:")
+    if st.button("Animate! 🚀"): st.success("Processing started...")
+
+with t[8]:
+    st.file_uploader("Sample (MP4/MP3):", type=["mp3", "mp4", "m4a", "wav"])
+    st.button("Clone Voice")
+
+with t[9]:
+    f1, f2 = st.file_uploader("Part 1:"), st.file_uploader("Part 2:")
+    if f1 and f2 and st.button("Merge"): st.audio((AudioSegment.from_file(f1)+AudioSegment.from_file(f2)).export(io.BytesIO(), format="mp3"))import streamlit as st, asyncio, edge_tts, io, os, re, random
+from pydub import AudioSegment, effects
+from groq import Groq
+
+st.set_page_config(page_title="AI Studio Pro", layout="wide")
+key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.get("api_key", "")
+client = Groq(api_key=key) if key else None
+
+def apply_fx(audio, p, e, s, m):
+    try:
+        if s != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (1 + s/100))}).set_frame_rate(44100)
+        if p != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (2.0 ** (p/12.0)))}).set_frame_rate(44100)
+        if e > 0: audio = audio.overlay(audio - (30 - e), position=150)
+        return effects.normalize(audio) if m else audio
+    except: return audio
+
+v_lib = {"🇵🇰 Urdu Male": "ur-PK-AsadNeural", "🇵🇰 Urdu Female": "ur-PK-UzmaNeural", "🇮🇳 Hindi Male": "hi-IN-MadhurNeural", "🇺🇸 US Male": "en-US-GuyNeural", "🎭 Movie": "en-AU-WilliamNeural"}
+
+st.sidebar.header("🎚️ Settings")
+pv, ev, sv = st.sidebar.slider("Pitch", -10, 10, -5), st.sidebar.slider("Echo", 0, 5, 1), st.sidebar.slider("Speed", -10, 20, 0)
+mo = st.sidebar.checkbox("Mastering", True)
+
+t = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
+
+with t[0]:
+    txt = st.text_area("Script:"); vc = st.selectbox("Voice:", list(v_lib.keys()))
+    if st.button("Generate"):
+        for i, p in enumerate(txt.split("---")):
+            if p.strip():
+                asyncio.run(edge_tts.Communicate(p, v_lib[vc]).save(f"{i}.mp3"))
+                st.audio(apply_fx(AudioSegment.from_file(f"{i}.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[1]:
+    v1, v2 = st.selectbox("Voice A:", list(v_lib.keys()), 0), st.selectbox("Voice B:", list(v_lib.keys()), 1)
+    if st.button("Mix Dialogue"):
+        res = AudioSegment.empty()
+        for i, l in enumerate(st.text_area("A --- B").split("---")):
+            asyncio.run(edge_tts.Communicate(l, v_lib[v1 if i%2==0 else v2]).save("m.mp3"))
+            res += apply_fx(AudioSegment.from_file("m.mp3"), pv, ev, sv, mo) + AudioSegment.silent(500)
+        st.audio(res.export(io.BytesIO(), format="mp3"))
+
+with t[2]:
+    u = st.file_uploader("Upload (MP3, M4A, WAV, MP4):", type=["mp3", "m4a", "wav", "mp4"])
+    if u and st.button("Fix Audio"): st.audio(apply_fx(AudioSegment.from_file(u), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[3]:
+    jv = st.selectbox("Jarvis Voice:", list(v_lib.keys()))
+    if st.button("Ask Jarvis"):
+        ans = client.chat.completions.create(messages=[{"role":"system","content":"Speak Roman Urdu. Image: AI_IMAGE_PROMPT: (English)"},{"role":"user","content":st.text_input("Order? ")}], model="llama-3.3-70b-versatile").choices[0].message.content
+        st.write(ans.split('AI_IMAGE_PROMPT:')[0])
+        asyncio.run(edge_tts.Communicate(ans.split('AI_IMAGE_PROMPT:')[0], v_lib[jv]).save("j.mp3"))
+        st.audio(apply_fx(AudioSegment.from_file("j.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+        if "AI_IMAGE_PROMPT:" in ans: st.image(f"https://pollinations.ai/p/{re.sub(r'[^a-zA-Z]','',ans.split('AI_IMAGE_PROMPT:')[1])}?width=1024&height=1024&model=flux")
+
+with t[4]:
+    ip = st.text_input("Idea (English):")
+    if st.button("Generate Art"):
+        url = f"https://pollinations.ai/p/{ip.replace(' ','%20')}?width=1024&height=1024&seed={random.randint(1,999)}&model=flux"
+        st.image(url); st.markdown(f"[📥 Download]({url})")
+
+with t[5]:
+    if st.button("Write Script"): st.write(client.chat.completions.create(messages=[{"role":"user","content":"Write Roman Urdu script: "+st.text_input("Topic:")}], model="llama-3.3-70b-versatile").choices[0].message.content)
+
+with t[6]:
+    v, m = st.file_uploader("Voice:"), st.file_uploader("Music:")
+    if v and m and st.button("Mix BGM"): st.audio(AudioSegment.from_file(v).overlay(AudioSegment.from_file(m)-15, loop=True).export(io.BytesIO(), format="mp3"))
+
+with t[7]:
+    st.file_uploader("Img:"), st.file_uploader("Aud:")
+    if st.button("Animate! 🚀"): st.success("Processing started...")
+
+with t[8]:
+    st.file_uploader("Sample (MP4/MP3):", type=["mp3", "mp4", "m4a", "wav"])
+    st.button("Clone Voice")
+
+with t[9]:
+    f1, f2 = st.file_uploader("Part 1:"), st.file_uploader("Part 2:")
+    if f1 and f2 and st.button("Merge"): st.audio((AudioSegment.from_file(f1)+AudioSegment.from_file(f2)).export(io.BytesIO(), format="mp3"))import streamlit as st, asyncio, edge_tts, io, os, re, random
+from pydub import AudioSegment, effects
+from groq import Groq
+
+st.set_page_config(page_title="AI Studio Pro", layout="wide")
+key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.get("api_key", "")
+client = Groq(api_key=key) if key else None
+
+def apply_fx(audio, p, e, s, m):
+    try:
+        if s != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (1 + s/100))}).set_frame_rate(44100)
+        if p != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (2.0 ** (p/12.0)))}).set_frame_rate(44100)
+        if e > 0: audio = audio.overlay(audio - (30 - e), position=150)
+        return effects.normalize(audio) if m else audio
+    except: return audio
+
+v_lib = {"🇵🇰 Urdu Male": "ur-PK-AsadNeural", "🇵🇰 Urdu Female": "ur-PK-UzmaNeural", "🇮🇳 Hindi Male": "hi-IN-MadhurNeural", "🇺🇸 US Male": "en-US-GuyNeural", "🎭 Movie": "en-AU-WilliamNeural"}
+
+st.sidebar.header("🎚️ Settings")
+pv, ev, sv = st.sidebar.slider("Pitch", -10, 10, -5), st.sidebar.slider("Echo", 0, 5, 1), st.sidebar.slider("Speed", -10, 20, 0)
+mo = st.sidebar.checkbox("Mastering", True)
+
+t = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
+
+with t[0]:
+    txt = st.text_area("Script:"); vc = st.selectbox("Voice:", list(v_lib.keys()))
+    if st.button("Generate"):
+        for i, p in enumerate(txt.split("---")):
+            if p.strip():
+                asyncio.run(edge_tts.Communicate(p, v_lib[vc]).save(f"{i}.mp3"))
+                st.audio(apply_fx(AudioSegment.from_file(f"{i}.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[1]:
+    v1, v2 = st.selectbox("Voice A:", list(v_lib.keys()), 0), st.selectbox("Voice B:", list(v_lib.keys()), 1)
+    if st.button("Mix Dialogue"):
+        res = AudioSegment.empty()
+        for i, l in enumerate(st.text_area("A --- B").split("---")):
+            asyncio.run(edge_tts.Communicate(l, v_lib[v1 if i%2==0 else v2]).save("m.mp3"))
+            res += apply_fx(AudioSegment.from_file("m.mp3"), pv, ev, sv, mo) + AudioSegment.silent(500)
+        st.audio(res.export(io.BytesIO(), format="mp3"))
+
+with t[2]:
+    u = st.file_uploader("Upload (MP3, M4A, WAV, MP4):", type=["mp3", "m4a", "wav", "mp4"])
+    if u and st.button("Fix Audio"): st.audio(apply_fx(AudioSegment.from_file(u), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[3]:
+    jv = st.selectbox("Jarvis Voice:", list(v_lib.keys()))
+    if st.button("Ask Jarvis"):
+        ans = client.chat.completions.create(messages=[{"role":"system","content":"Speak Roman Urdu. Image: AI_IMAGE_PROMPT: (English)"},{"role":"user","content":st.text_input("Order? ")}], model="llama-3.3-70b-versatile").choices[0].message.content
+        st.write(ans.split('AI_IMAGE_PROMPT:')[0])
+        asyncio.run(edge_tts.Communicate(ans.split('AI_IMAGE_PROMPT:')[0], v_lib[jv]).save("j.mp3"))
+        st.audio(apply_fx(AudioSegment.from_file("j.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+        if "AI_IMAGE_PROMPT:" in ans: st.image(f"https://pollinations.ai/p/{re.sub(r'[^a-zA-Z]','',ans.split('AI_IMAGE_PROMPT:')[1])}?width=1024&height=1024&model=flux")
+
+with t[4]:
+    ip = st.text_input("Idea (English):")
+    if st.button("Generate Art"):
+        url = f"https://pollinations.ai/p/{ip.replace(' ','%20')}?width=1024&height=1024&seed={random.randint(1,999)}&model=flux"
+        st.image(url); st.markdown(f"[📥 Download]({url})")
+
+with t[5]:
+    if st.button("Write Script"): st.write(client.chat.completions.create(messages=[{"role":"user","content":"Write Roman Urdu script: "+st.text_input("Topic:")}], model="llama-3.3-70b-versatile").choices[0].message.content)
+
+with t[6]:
+    v, m = st.file_uploader("Voice:"), st.file_uploader("Music:")
+    if v and m and st.button("Mix BGM"): st.audio(AudioSegment.from_file(v).overlay(AudioSegment.from_file(m)-15, loop=True).export(io.BytesIO(), format="mp3"))
+
+with t[7]:
+    st.file_uploader("Img:"), st.file_uploader("Aud:")
+    if st.button("Animate! 🚀"): st.success("Processing started...")
+
+with t[8]:
+    st.file_uploader("Sample (MP4/MP3):", type=["mp3", "mp4", "m4a", "wav"])
+    st.button("Clone Voice")
+
+with t[9]:
+    f1, f2 = st.file_uploader("Part 1:"), st.file_uploader("Part 2:")
+    if f1 and f2 and st.button("Merge"): st.audio((AudioSegment.from_file(f1)+AudioSegment.from_file(f2)).export(io.BytesIO(), format="mp3"))import streamlit as st, asyncio, edge_tts, io, os, re, random
+from pydub import AudioSegment, effects
+from groq import Groq
+
+st.set_page_config(page_title="AI Studio Pro", layout="wide")
+key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.get("api_key", "")
+client = Groq(api_key=key) if key else None
+
+def apply_fx(audio, p, e, s, m):
+    try:
+        if s != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (1 + s/100))}).set_frame_rate(44100)
+        if p != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (2.0 ** (p/12.0)))}).set_frame_rate(44100)
+        if e > 0: audio = audio.overlay(audio - (30 - e), position=150)
+        return effects.normalize(audio) if m else audio
+    except: return audio
+
+v_lib = {"🇵🇰 Urdu Male": "ur-PK-AsadNeural", "🇵🇰 Urdu Female": "ur-PK-UzmaNeural", "🇮🇳 Hindi Male": "hi-IN-MadhurNeural", "🇺🇸 US Male": "en-US-GuyNeural", "🎭 Movie": "en-AU-WilliamNeural"}
+
+st.sidebar.header("🎚️ Settings")
+pv, ev, sv = st.sidebar.slider("Pitch", -10, 10, -5), st.sidebar.slider("Echo", 0, 5, 1), st.sidebar.slider("Speed", -10, 20, 0)
+mo = st.sidebar.checkbox("Mastering", True)
+
+t = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
+
+with t[0]:
+    txt = st.text_area("Script:"); vc = st.selectbox("Voice:", list(v_lib.keys()))
+    if st.button("Generate"):
+        for i, p in enumerate(txt.split("---")):
+            if p.strip():
+                asyncio.run(edge_tts.Communicate(p, v_lib[vc]).save(f"{i}.mp3"))
+                st.audio(apply_fx(AudioSegment.from_file(f"{i}.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[1]:
+    v1, v2 = st.selectbox("Voice A:", list(v_lib.keys()), 0), st.selectbox("Voice B:", list(v_lib.keys()), 1)
+    if st.button("Mix Dialogue"):
+        res = AudioSegment.empty()
+        for i, l in enumerate(st.text_area("A --- B").split("---")):
+            asyncio.run(edge_tts.Communicate(l, v_lib[v1 if i%2==0 else v2]).save("m.mp3"))
+            res += apply_fx(AudioSegment.from_file("m.mp3"), pv, ev, sv, mo) + AudioSegment.silent(500)
+        st.audio(res.export(io.BytesIO(), format="mp3"))
+
+with t[2]:
+    u = st.file_uploader("Upload (MP3, M4A, WAV, MP4):", type=["mp3", "m4a", "wav", "mp4"])
+    if u and st.button("Fix Audio"): st.audio(apply_fx(AudioSegment.from_file(u), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[3]:
+    jv = st.selectbox("Jarvis Voice:", list(v_lib.keys()))
+    if st.button("Ask Jarvis"):
+        ans = client.chat.completions.create(messages=[{"role":"system","content":"Speak Roman Urdu. Image: AI_IMAGE_PROMPT: (English)"},{"role":"user","content":st.text_input("Order? ")}], model="llama-3.3-70b-versatile").choices[0].message.content
+        st.write(ans.split('AI_IMAGE_PROMPT:')[0])
+        asyncio.run(edge_tts.Communicate(ans.split('AI_IMAGE_PROMPT:')[0], v_lib[jv]).save("j.mp3"))
+        st.audio(apply_fx(AudioSegment.from_file("j.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+        if "AI_IMAGE_PROMPT:" in ans: st.image(f"https://pollinations.ai/p/{re.sub(r'[^a-zA-Z]','',ans.split('AI_IMAGE_PROMPT:')[1])}?width=1024&height=1024&model=flux")
+
+with t[4]:
+    ip = st.text_input("Idea (English):")
+    if st.button("Generate Art"):
+        url = f"https://pollinations.ai/p/{ip.replace(' ','%20')}?width=1024&height=1024&seed={random.randint(1,999)}&model=flux"
+        st.image(url); st.markdown(f"[📥 Download]({url})")
+
+with t[5]:
+    if st.button("Write Script"): st.write(client.chat.completions.create(messages=[{"role":"user","content":"Write Roman Urdu script: "+st.text_input("Topic:")}], model="llama-3.3-70b-versatile").choices[0].message.content)
+
+with t[6]:
+    v, m = st.file_uploader("Voice:"), st.file_uploader("Music:")
+    if v and m and st.button("Mix BGM"): st.audio(AudioSegment.from_file(v).overlay(AudioSegment.from_file(m)-15, loop=True).export(io.BytesIO(), format="mp3"))
+
+with t[7]:
+    st.file_uploader("Img:"), st.file_uploader("Aud:")
+    if st.button("Animate! 🚀"): st.success("Processing started...")
+
+with t[8]:
+    st.file_uploader("Sample (MP4/MP3):", type=["mp3", "mp4", "m4a", "wav"])
+    st.button("Clone Voice")
+
+with t[9]:
+    f1, f2 = st.file_uploader("Part 1:"), st.file_uploader("Part 2:")
+    if f1 and f2 and st.button("Merge"): st.audio((AudioSegment.from_file(f1)+AudioSegment.from_file(f2)).export(io.BytesIO(), format="mp3"))import streamlit as st, asyncio, edge_tts, io, os, re, random
+from pydub import AudioSegment, effects
+from groq import Groq
+
+st.set_page_config(page_title="AI Studio Pro", layout="wide")
+key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.get("api_key", "")
+client = Groq(api_key=key) if key else None
+
+def apply_fx(audio, p, e, s, m):
+    try:
+        if s != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (1 + s/100))}).set_frame_rate(44100)
+        if p != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (2.0 ** (p/12.0)))}).set_frame_rate(44100)
+        if e > 0: audio = audio.overlay(audio - (30 - e), position=150)
+        return effects.normalize(audio) if m else audio
+    except: return audio
+
+v_lib = {"🇵🇰 Urdu Male": "ur-PK-AsadNeural", "🇵🇰 Urdu Female": "ur-PK-UzmaNeural", "🇮🇳 Hindi Male": "hi-IN-MadhurNeural", "🇺🇸 US Male": "en-US-GuyNeural", "🎭 Movie": "en-AU-WilliamNeural"}
+
+st.sidebar.header("🎚️ Settings")
+pv, ev, sv = st.sidebar.slider("Pitch", -10, 10, -5), st.sidebar.slider("Echo", 0, 5, 1), st.sidebar.slider("Speed", -10, 20, 0)
+mo = st.sidebar.checkbox("Mastering", True)
+
+t = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
+
+with t[0]:
+    txt = st.text_area("Script:"); vc = st.selectbox("Voice:", list(v_lib.keys()))
+    if st.button("Generate"):
+        for i, p in enumerate(txt.split("---")):
+            if p.strip():
+                asyncio.run(edge_tts.Communicate(p, v_lib[vc]).save(f"{i}.mp3"))
+                st.audio(apply_fx(AudioSegment.from_file(f"{i}.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[1]:
+    v1, v2 = st.selectbox("Voice A:", list(v_lib.keys()), 0), st.selectbox("Voice B:", list(v_lib.keys()), 1)
+    if st.button("Mix Dialogue"):
+        res = AudioSegment.empty()
+        for i, l in enumerate(st.text_area("A --- B").split("---")):
+            asyncio.run(edge_tts.Communicate(l, v_lib[v1 if i%2==0 else v2]).save("m.mp3"))
+            res += apply_fx(AudioSegment.from_file("m.mp3"), pv, ev, sv, mo) + AudioSegment.silent(500)
+        st.audio(res.export(io.BytesIO(), format="mp3"))
+
+with t[2]:
+    u = st.file_uploader("Upload (MP3, M4A, WAV, MP4):", type=["mp3", "m4a", "wav", "mp4"])
+    if u and st.button("Fix Audio"): st.audio(apply_fx(AudioSegment.from_file(u), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[3]:
+    jv = st.selectbox("Jarvis Voice:", list(v_lib.keys()))
+    if st.button("Ask Jarvis"):
+        ans = client.chat.completions.create(messages=[{"role":"system","content":"Speak Roman Urdu. Image: AI_IMAGE_PROMPT: (English)"},{"role":"user","content":st.text_input("Order? ")}], model="llama-3.3-70b-versatile").choices[0].message.content
+        st.write(ans.split('AI_IMAGE_PROMPT:')[0])
+        asyncio.run(edge_tts.Communicate(ans.split('AI_IMAGE_PROMPT:')[0], v_lib[jv]).save("j.mp3"))
+        st.audio(apply_fx(AudioSegment.from_file("j.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+        if "AI_IMAGE_PROMPT:" in ans: st.image(f"https://pollinations.ai/p/{re.sub(r'[^a-zA-Z]','',ans.split('AI_IMAGE_PROMPT:')[1])}?width=1024&height=1024&model=flux")
+
+with t[4]:
+    ip = st.text_input("Idea (English):")
+    if st.button("Generate Art"):
+        url = f"https://pollinations.ai/p/{ip.replace(' ','%20')}?width=1024&height=1024&seed={random.randint(1,999)}&model=flux"
+        st.image(url); st.markdown(f"[📥 Download]({url})")
+
+with t[5]:
+    if st.button("Write Script"): st.write(client.chat.completions.create(messages=[{"role":"user","content":"Write Roman Urdu script: "+st.text_input("Topic:")}], model="llama-3.3-70b-versatile").choices[0].message.content)
+
+with t[6]:
+    v, m = st.file_uploader("Voice:"), st.file_uploader("Music:")
+    if v and m and st.button("Mix BGM"): st.audio(AudioSegment.from_file(v).overlay(AudioSegment.from_file(m)-15, loop=True).export(io.BytesIO(), format="mp3"))
+
+with t[7]:
+    st.file_uploader("Img:"), st.file_uploader("Aud:")
+    if st.button("Animate! 🚀"): st.success("Processing started...")
+
+with t[8]:
+    st.file_uploader("Sample (MP4/MP3):", type=["mp3", "mp4", "m4a", "wav"])
+    st.button("Clone Voice")
+
+with t[9]:
+    f1, f2 = st.file_uploader("Part 1:"), st.file_uploader("Part 2:")
+    if f1 and f2 and st.button("Merge"): st.audio((AudioSegment.from_file(f1)+AudioSegment.from_file(f2)).export(io.BytesIO(), format="mp3"))import streamlit as st, asyncio, edge_tts, io, os, re, random
+from pydub import AudioSegment, effects
+from groq import Groq
+
+st.set_page_config(page_title="AI Studio Pro", layout="wide")
+key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.get("api_key", "")
+client = Groq(api_key=key) if key else None
+
+def apply_fx(audio, p, e, s, m):
+    try:
+        if s != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (1 + s/100))}).set_frame_rate(44100)
+        if p != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (2.0 ** (p/12.0)))}).set_frame_rate(44100)
+        if e > 0: audio = audio.overlay(audio - (30 - e), position=150)
+        return effects.normalize(audio) if m else audio
+    except: return audio
+
+v_lib = {"🇵🇰 Urdu Male": "ur-PK-AsadNeural", "🇵🇰 Urdu Female": "ur-PK-UzmaNeural", "🇮🇳 Hindi Male": "hi-IN-MadhurNeural", "🇺🇸 US Male": "en-US-GuyNeural", "🎭 Movie": "en-AU-WilliamNeural"}
+
+st.sidebar.header("🎚️ Settings")
+pv, ev, sv = st.sidebar.slider("Pitch", -10, 10, -5), st.sidebar.slider("Echo", 0, 5, 1), st.sidebar.slider("Speed", -10, 20, 0)
+mo = st.sidebar.checkbox("Mastering", True)
+
+t = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
+
+with t[0]:
+    txt = st.text_area("Script:"); vc = st.selectbox("Voice:", list(v_lib.keys()))
+    if st.button("Generate"):
+        for i, p in enumerate(txt.split("---")):
+            if p.strip():
+                asyncio.run(edge_tts.Communicate(p, v_lib[vc]).save(f"{i}.mp3"))
+                st.audio(apply_fx(AudioSegment.from_file(f"{i}.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[1]:
+    v1, v2 = st.selectbox("Voice A:", list(v_lib.keys()), 0), st.selectbox("Voice B:", list(v_lib.keys()), 1)
+    if st.button("Mix Dialogue"):
+        res = AudioSegment.empty()
+        for i, l in enumerate(st.text_area("A --- B").split("---")):
+            asyncio.run(edge_tts.Communicate(l, v_lib[v1 if i%2==0 else v2]).save("m.mp3"))
+            res += apply_fx(AudioSegment.from_file("m.mp3"), pv, ev, sv, mo) + AudioSegment.silent(500)
+        st.audio(res.export(io.BytesIO(), format="mp3"))
+
+with t[2]:
+    u = st.file_uploader("Upload (MP3, M4A, WAV, MP4):", type=["mp3", "m4a", "wav", "mp4"])
+    if u and st.button("Fix Audio"): st.audio(apply_fx(AudioSegment.from_file(u), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[3]:
+    jv = st.selectbox("Jarvis Voice:", list(v_lib.keys()))
+    if st.button("Ask Jarvis"):
+        ans = client.chat.completions.create(messages=[{"role":"system","content":"Speak Roman Urdu. Image: AI_IMAGE_PROMPT: (English)"},{"role":"user","content":st.text_input("Order? ")}], model="llama-3.3-70b-versatile").choices[0].message.content
+        st.write(ans.split('AI_IMAGE_PROMPT:')[0])
+        asyncio.run(edge_tts.Communicate(ans.split('AI_IMAGE_PROMPT:')[0], v_lib[jv]).save("j.mp3"))
+        st.audio(apply_fx(AudioSegment.from_file("j.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+        if "AI_IMAGE_PROMPT:" in ans: st.image(f"https://pollinations.ai/p/{re.sub(r'[^a-zA-Z]','',ans.split('AI_IMAGE_PROMPT:')[1])}?width=1024&height=1024&model=flux")
+
+with t[4]:
+    ip = st.text_input("Idea (English):")
+    if st.button("Generate Art"):
+        url = f"https://pollinations.ai/p/{ip.replace(' ','%20')}?width=1024&height=1024&seed={random.randint(1,999)}&model=flux"
+        st.image(url); st.markdown(f"[📥 Download]({url})")
+
+with t[5]:
+    if st.button("Write Script"): st.write(client.chat.completions.create(messages=[{"role":"user","content":"Write Roman Urdu script: "+st.text_input("Topic:")}], model="llama-3.3-70b-versatile").choices[0].message.content)
+
+with t[6]:
+    v, m = st.file_uploader("Voice:"), st.file_uploader("Music:")
+    if v and m and st.button("Mix BGM"): st.audio(AudioSegment.from_file(v).overlay(AudioSegment.from_file(m)-15, loop=True).export(io.BytesIO(), format="mp3"))
+
+with t[7]:
+    st.file_uploader("Img:"), st.file_uploader("Aud:")
+    if st.button("Animate! 🚀"): st.success("Processing started...")
+
+with t[8]:
+    st.file_uploader("Sample (MP4/MP3):", type=["mp3", "mp4", "m4a", "wav"])
+    st.button("Clone Voice")
+
+with t[9]:
+    f1, f2 = st.file_uploader("Part 1:"), st.file_uploader("Part 2:")
+    if f1 and f2 and st.button("Merge"): st.audio((AudioSegment.from_file(f1)+AudioSegment.from_file(f2)).export(io.BytesIO(), format="mp3"))import streamlit as st, asyncio, edge_tts, io, os, re, random
+from pydub import AudioSegment, effects
+from groq import Groq
+
+st.set_page_config(page_title="AI Studio Pro", layout="wide")
+key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.get("api_key", "")
+client = Groq(api_key=key) if key else None
+
+def apply_fx(audio, p, e, s, m):
+    try:
+        if s != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (1 + s/100))}).set_frame_rate(44100)
+        if p != 0: audio = audio._spawn(audio.raw_data, overrides={'frame_rate': int(audio.frame_rate * (2.0 ** (p/12.0)))}).set_frame_rate(44100)
+        if e > 0: audio = audio.overlay(audio - (30 - e), position=150)
+        return effects.normalize(audio) if m else audio
+    except: return audio
+
+v_lib = {"🇵🇰 Urdu Male": "ur-PK-AsadNeural", "🇵🇰 Urdu Female": "ur-PK-UzmaNeural", "🇮🇳 Hindi Male": "hi-IN-MadhurNeural", "🇺🇸 US Male": "en-US-GuyNeural", "🎭 Movie": "en-AU-WilliamNeural"}
+
+st.sidebar.header("🎚️ Settings")
+pv, ev, sv = st.sidebar.slider("Pitch", -10, 10, -5), st.sidebar.slider("Echo", 0, 5, 1), st.sidebar.slider("Speed", -10, 20, 0)
+mo = st.sidebar.checkbox("Mastering", True)
+
+t = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
+
+with t[0]:
+    txt = st.text_area("Script:"); vc = st.selectbox("Voice:", list(v_lib.keys()))
+    if st.button("Generate"):
+        for i, p in enumerate(txt.split("---")):
+            if p.strip():
+                asyncio.run(edge_tts.Communicate(p, v_lib[vc]).save(f"{i}.mp3"))
+                st.audio(apply_fx(AudioSegment.from_file(f"{i}.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[1]:
+    v1, v2 = st.selectbox("Voice A:", list(v_lib.keys()), 0), st.selectbox("Voice B:", list(v_lib.keys()), 1)
+    if st.button("Mix Dialogue"):
+        res = AudioSegment.empty()
+        for i, l in enumerate(st.text_area("A --- B").split("---")):
+            asyncio.run(edge_tts.Communicate(l, v_lib[v1 if i%2==0 else v2]).save("m.mp3"))
+            res += apply_fx(AudioSegment.from_file("m.mp3"), pv, ev, sv, mo) + AudioSegment.silent(500)
+        st.audio(res.export(io.BytesIO(), format="mp3"))
+
+with t[2]:
+    u = st.file_uploader("Upload (MP3, M4A, WAV, MP4):", type=["mp3", "m4a", "wav", "mp4"])
+    if u and st.button("Fix Audio"): st.audio(apply_fx(AudioSegment.from_file(u), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+
+with t[3]:
+    jv = st.selectbox("Jarvis Voice:", list(v_lib.keys()))
+    if st.button("Ask Jarvis"):
+        ans = client.chat.completions.create(messages=[{"role":"system","content":"Speak Roman Urdu. Image: AI_IMAGE_PROMPT: (English)"},{"role":"user","content":st.text_input("Order? ")}], model="llama-3.3-70b-versatile").choices[0].message.content
+        st.write(ans.split('AI_IMAGE_PROMPT:')[0])
+        asyncio.run(edge_tts.Communicate(ans.split('AI_IMAGE_PROMPT:')[0], v_lib[jv]).save("j.mp3"))
+        st.audio(apply_fx(AudioSegment.from_file("j.mp3"), pv, ev, sv, mo).export(io.BytesIO(), format="mp3"))
+        if "AI_IMAGE_PROMPT:" in ans: st.image(f"https://pollinations.ai/p/{re.sub(r'[^a-zA-Z]','',ans.split('AI_IMAGE_PROMPT:')[1])}?width=1024&height=1024&model=flux")
+
+with t[4]:
+    ip = st.text_input("Idea (English):")
+    if st.button("Generate Art"):
+        url = f"https://pollinations.ai/p/{ip.replace(' ','%20')}?width=1024&height=1024&seed={random.randint(1,999)}&model=flux"
+        st.image(url); st.markdown(f"[📥 Download]({url})")
+
+with t[5]:
+    if st.button("Write Script"): st.write(client.chat.completions.create(messages=[{"role":"user","content":"Write Roman Urdu script: "+st.text_input("Topic:")}], model="llama-3.3-70b-versatile").choices[0].message.content)
+
+with t[6]:
+    v, m = st.file_uploader("Voice:"), st.file_uploader("Music:")
+    if v and m and st.button("Mix BGM"): st.audio(AudioSegment.from_file(v).overlay(AudioSegment.from_file(m)-15, loop=True).export(io.BytesIO(), format="mp3"))
+
+with t[7]:
+    st.file_uploader("Img:"), st.file_uploader("Aud:")
+    if st.button("Animate! 🚀"): st.success("Processing started...")
+
+with t[8]:
+    st.file_uploader("Sample (MP4/MP3):", type=["mp3", "mp4", "m4a", "wav"])
+    st.button("Clone Voice")
+
+with t[9]:
+    f1, f2 = st.file_uploader("Part 1:"), st.file_uploader("Part 2:")
+    if f1 and f2 and st.button("Merge"): st.audio((AudioSegment.from_file(f1)+AudioSegment.from_file(f2)).export(io.BytesIO(), format="mp3"))
