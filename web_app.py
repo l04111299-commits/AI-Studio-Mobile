@@ -1,73 +1,78 @@
 import streamlit as st
 import asyncio
 import edge_tts
+from pydub import AudioSegment, AudioOps
 import os
-from pydub import AudioSegment, effects
+import io
 
-st.set_page_config(page_title="AI Mobile Production Pro", page_icon="🎙️")
+# --- Page Config ---
+st.set_page_config(page_title="AI Multi-Audio Studio", layout="centered")
+st.title("🎙️ AI All-in-One Audio Studio")
+st.markdown("Text likhein, File upload karein ya Record karein - Sab edit hoga!")
 
-st.title("🎙️ AI Mobile Production Pro")
-st.markdown("---")
+# --- Sidebar: Effects Settings ---
+st.sidebar.header("🎚️ Audio Effects Control")
+pitch_val = st.sidebar.slider("Voice Bhari Karein (Pitch)", -20, 20, -10)
+echo_delay = st.sidebar.slider("Echo Delay (ms)", 0, 500, 150)
+echo_decibel = st.sidebar.slider("Echo Volume", -20, -5, -12)
 
-# 1. Function to fix formatting
-async def generate_audio(text, voice, rate, pitch):
-    # Format: Rate must be '+0%' or '-10%' etc.
-    # Pitch must be '+0Hz' or '-10Hz' etc.
-    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-    temp_file = "temp_web.mp3"
-    await communicate.save(temp_file)
-    return temp_file
+# --- Functions ---
+def apply_effects(audio_path):
+    sound = AudioSegment.from_file(audio_path)
+    
+    # 1. Pitch Modification (Bhari Awaz)
+    new_sample_rate = int(sound.frame_rate * (2.0 ** (pitch_val / 12.0)))
+    sound = sound._spawn(sound.raw_data, overrides={'frame_rate': new_sample_rate})
+    sound = sound.set_frame_rate(44100)
 
-# 2. Input Section
-script = st.text_area("Apna Script Likhen (Bulk ke liye '---' use karein):", height=150)
+    # 2. Echo Effect
+    if echo_delay > 0:
+        output = AudioSegment.silent(duration=len(sound) + echo_delay)
+        output = output.overlay(sound)
+        echo = sound - abs(echo_decibel)
+        output = output.overlay(echo, position=echo_delay)
+        sound = output
 
-col1, col2 = st.columns(2)
-with col1:
-    voice = st.selectbox("Awaz Chunein:", ["hi-IN-MadhurNeural", "hi-IN-SwaraNeural", "ur-PK-AsadNeural", "ur-PK-UzmaNeural"])
-    # Hum symbols slider se hata rahe hain taake error na aaye
-    speed_val = st.select_slider("Speed:", options=[-25, -15, 0, 10, 20], value=-15)
+    # 3. Mastering (Loudness & Clarity)
+    sound = AudioOps.normalize(sound)
+    
+    out_io = io.BytesIO()
+    sound.export(out_io, format="mp3")
+    return out_io
 
-with col2:
-    pitch_val = st.select_slider("Pitch (Bhari/Halki):", options=[-15, -10, 0, 10, 15], value=0)
-    mastering = st.checkbox("Auto-Mastering", value=True)
+# --- Main App Tabs ---
+tab1, tab2, tab3 = st.tabs(["✍️ Text-to-Speech", "📁 Upload & Edit", "🎤 Record Voice"])
 
-echo_val = st.slider("Echo Level:", 0, 10, 3)
+# TAB 1: Text-to-Speech
+with tab1:
+    text = st.text_area("Apna Script Likhein:", "Dosto, aaj hum banayenge ek professional audio.")
+    voice = st.selectbox("Awaz Chunein:", ["hi-IN-MadhurNeural (Bhari)", "ur-PK-UzmaNeural (Urdu)"])
+    if st.button("Generate TTS Audio"):
+        if text:
+            async def make_tts():
+                v = "hi-IN-MadhurNeural" if "Madhur" in voice else "ur-PK-UzmaNeural"
+                communicate = edge_tts.Communicate(text, v)
+                await communicate.save("temp.mp3")
+            
+            asyncio.run(make_tts())
+            processed_audio = apply_effects("temp.mp3")
+            st.audio(processed_audio)
+            st.download_button("Download TTS Audio", processed_audio, "ai_voice.mp3")
 
-# 3. Processing Logic
-if st.button("🚀 GENERATE AUDIO"):
-    if script:
-        scripts = [s.strip() for s in script.split("---") if s.strip()]
+# TAB 2: Upload Audio
+with tab2:
+    uploaded_file = st.file_uploader("Apni Audio File Select Karein (.mp3, .wav)", type=["mp3", "wav"])
+    if uploaded_file is not None:
+        with open("uploaded.mp3", "wb") as f:
+            f.write(uploaded_file.getbuffer())
         
-        # Proper formatting for edge-tts
-        final_speed = f"{speed_val:+d}%"
-        final_pitch = f"{pitch_val:+d}Hz"
-        
-        for idx, s_text in enumerate(scripts):
-            with st.spinner(f"Processing Part {idx+1}..."):
-                # Run TTS
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    temp_mp3 = loop.run_until_complete(generate_audio(s_text, voice, final_speed, final_pitch))
-                    
-                    # Audio Effects
-                    audio = AudioSegment.from_file(temp_mp3)
-                    if mastering:
-                        audio = effects.normalize(audio) + 5
-                    
-                    if echo_val > 0:
-                        echo = audio - (25 - echo_val)
-                        audio = audio.overlay(echo, position=200)
-                    
-                    final_name = f"Final_Audio_{idx+1}.mp3"
-                    audio.export(final_name, format="mp3")
-                    
-                    st.audio(final_name)
-                    with open(final_name, "rb") as f:
-                        st.download_button(f"⬇️ Download Part {idx+1}", f, file_name=final_name)
-                    
-                    os.remove(temp_mp3)
-                except Exception as e:
-                    st.error(f"Error: {e}")
-    else:
-        st.warning("Pehle script likhen!")
+        if st.button("Edit & Apply Effects"):
+            processed_audio = apply_effects("uploaded.mp3")
+            st.audio(processed_audio)
+            st.download_button("Download Edited Audio", processed_audio, "edited_audio.mp3")
+
+# TAB 3: Recording (Direct Link)
+with tab3:
+    st.info("Mobile par recording ke liye aap default recorder use karke 'Upload' tab mein file dal sakte hain. Direct web recording ke liye 'streamlit-mic-recorder' library install karni hogi.")
+    st.write("Aap niche diye gaye button se recording testing kar sakte hain (Browser permission chahiye hogi).")
+    # Note: Recording ke liye advance JS chahiye hoti hai, filhal best tarika Mobile Recorder + Upload hai.
