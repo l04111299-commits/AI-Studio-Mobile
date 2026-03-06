@@ -7,29 +7,27 @@ import os
 from groq import Groq
 import requests
 
-st.set_page_config(page_title="AI Studio Pro", page_icon="🎙️", layout="wide")
+st.set_page_config(page_title="AI Mega Studio Pro", page_icon="🎙️", layout="wide")
 
 # --- Streamlit Secrets Logic ---
-# Code mein ab API key nahi likhi, ye dashboard se uthayega
 try:
     if "GROQ_API_KEY" in st.secrets:
         client = Groq(api_key=st.secrets["GROQ_API_KEY"])
     else:
-        st.warning("⚠️ GROQ_API_KEY Streamlit Secrets mein nahi mili. Sidebar use karein.")
-        # Backup: Agar secrets kaam na karein to manual key ka option
+        # Agar secrets nahi hain to session state use karein
         if "api_key" not in st.session_state:
             st.session_state.api_key = ""
         client = Groq(api_key=st.session_state.api_key)
 except Exception as e:
-    st.error("Groq Client initialize nahi ho saka.")
+    st.error("Groq key setup ka masla hai.")
 
-# Sidebar for Manual Key (Just in case)
+# Sidebar for Manual Key Entry (Emergency Backup)
 with st.sidebar:
     st.header("🔑 API Settings")
-    manual_key = st.text_input("Nayi API Key yahan dalein:", type="password")
+    manual_key = st.text_input("Nayi API Key yahan dalein (If needed):", type="password")
     if st.button("Update Key"):
         st.session_state.api_key = manual_key
-        st.success("Key updated for this session!")
+        st.success("Key updated!")
 
 # --- Audio Engine ---
 def apply_audio_effects(audio_segment, pitch_val, echo_val, speed_val, is_mastering):
@@ -66,42 +64,38 @@ voices = {
 # --- Tabs ---
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["✍️ TTS", "👥 Dialogue Mixer", "📁 Editor", "🤖 JARVIS AI", "🎨 IMAGE GEN"])
 
-with tab1:
-    script = st.text_area("Script:")
-    v_choice = st.radio("Voice:", list(voices.keys()), horizontal=True)
-    if st.button("Generate TTS"):
-        if script:
-            communicate = edge_tts.Communicate(script, voices[v_choice])
-            asyncio.run(communicate.save("t.mp3"))
-            s = apply_audio_effects(AudioSegment.from_file("t.mp3"), pitch, echo, speed, mastering)
-            st.audio(s.export(io.BytesIO(), format="mp3"))
-            os.remove("t.mp3")
-
 with tab4:
-    st.subheader("🤖 Jarvis Assistant")
-    user_q = st.text_input("Talk to Jarvis:", key="j_input")
-    if st.button("Submit Order") and user_q:
-        try:
-            # Re-init client with correct key
-            current_key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.api_key
-            active_client = Groq(api_key=current_key)
-            
-            chat_completion = active_client.chat.completions.create(
-                messages=[{"role": "system", "content": "You are Jarvis. Speak Roman Urdu. Call user Boss."},
-                          {"role": "user", "content": user_q}],
-                model="llama3-8b-8192",
-            )
-            ans = chat_completion.choices[0].message.content
-            st.write(f"🤖 Jarvis: {ans}")
-            # Voice Output
-            communicate = edge_tts.Communicate(ans, "hi-IN-MadhurNeural")
-            asyncio.run(communicate.save("j.mp3"))
-            j_v = apply_audio_effects(AudioSegment.from_file("j.mp3"), -15, 2, 0, True)
-            st.audio(j_v.export(io.BytesIO(), format="mp3"))
-            os.remove("j.mp3")
-        except Exception as e:
-            st.error(f"Error: {str(e)}")
+    st.subheader("🤖 Jarvis Assistant (Updated Model)")
+    user_q = st.text_input("Talk to Jarvis:", key="j_input_new")
+    
+    if st.button("Submit Order"):
+        if user_q:
+            try:
+                # Use correct key from secrets or session
+                key_to_use = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.api_key
+                active_client = Groq(api_key=key_to_use)
+                
+                # Updated Model: llama-3.3-70b-versatile
+                chat_completion = active_client.chat.completions.create(
+                    messages=[{"role": "system", "content": "You are Jarvis. Speak Roman Urdu. Call user Boss."},
+                              {"role": "user", "content": user_q}],
+                    model="llama-3.3-70b-versatile",
+                )
+                ans = chat_completion.choices[0].message.content
+                st.write(f"🤖 **Jarvis:** {ans}")
+                
+                # Voice Output
+                communicate = edge_tts.Communicate(ans, "hi-IN-MadhurNeural")
+                asyncio.run(communicate.save("j.mp3"))
+                j_v = apply_audio_effects(AudioSegment.from_file("j.mp3"), -15, 2, 0, True)
+                st.audio(j_v.export(io.BytesIO(), format="mp3"))
+                os.remove("j.mp3")
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+        else:
+            st.warning("Pehle kuch likhein Boss!")
 
+# --- (Baki Tabs ka code waisa hi rahega) ---
 with tab5:
     st.subheader("🎨 AI Image Gen")
     prompt = st.text_input("Image Prompt (English):", key="i_input")
@@ -110,6 +104,7 @@ with tab5:
             url = f"https://pollinations.ai/p/{prompt.replace(' ', '%20')}?width=1024&height=1024&model=flux"
             st.image(url)
             st.download_button("Download Image", requests.get(url).content, "image.jpg")
+
 
 
 
