@@ -10,7 +10,7 @@ st.set_page_config(page_title="AI Studio: Global Pro", page_icon="🎙️", layo
 st.title("🎙️ AI Studio: Global All-in-One")
 st.markdown("---")
 
-# --- Audio Effects Function (Original Features) ---
+# --- Audio Effects Function ---
 def apply_audio_effects(audio_segment, pitch_val, echo_val, speed_val, is_mastering):
     if speed_val != 0:
         new_sample_rate = int(audio_segment.frame_rate * (1 + speed_val/100))
@@ -35,49 +35,66 @@ pitch = st.sidebar.select_slider("Pitch (Bhari Awaz):", options=[-15, -10, 0, 10
 echo = st.sidebar.slider("Echo Level:", 0, 10, 3)
 mastering = st.sidebar.checkbox("Auto-Mastering", value=True)
 
-# --- Voice Database ---
+# --- Full Professional Voice Database ---
 voices = {
+    # --- Hindi/Urdu ---
     "👦 Male (Madhur)": "hi-IN-MadhurNeural",
     "👧 Female (Swara)": "hi-IN-SwaraNeural",
     "🇵🇰 Urdu Male (Asad)": "ur-PK-AsadNeural",
     "🇵🇰 Urdu Female (Uzma)": "ur-PK-UzmaNeural",
-    "🎬 Movie Narrator (US)": "en-US-GuyNeural",
-    "🎭 Deep Cinematic (UK)": "en-GB-ThomasNeural",
-    "🎤 Hollywood Style (US)": "en-US-ChristopherNeural"
+    "👩 Hindi News (Kavita)": "hi-IN-KavitaNeural",
+    
+    # --- English US (Professional/Movie) ---
+    "🎙️ Movie Narrator (Guy)": "en-US-GuyNeural",
+    "✨ Pro Female (Aria)": "en-US-AriaNeural",
+    "🎬 Hollywood Male (Christopher)": "en-US-ChristopherNeural",
+    "📢 Deep News (Eric)": "en-US-EricNeural",
+    "👧 Sweet Girl (Ana)": "en-US-AnaNeural",
+    "👴 Wise Old Man (Roger)": "en-US-RogerNeural",
+    
+    # --- English UK (Cinematic/Elegant) ---
+    "🎭 Cinematic Deep (Thomas)": "en-GB-ThomasNeural",
+    "👸 Royal Female (Libby)": "en-GB-LibbyNeural",
+    "🎙️ BBC Style (Ryan)": "en-GB-RyanNeural",
+    
+    # --- Other Global Styles ---
+    "🐨 Australian (Natasha)": "en-AU-NatashaNeural",
+    "🍁 Canadian (Liam)": "en-CA-LiamNeural"
 }
 
 # --- Main Tabs ---
 tab1, tab2, tab3 = st.tabs(["✍️ TTS (Single/Bulk)", "👥 Dialogue Mixer", "📁 Upload & Edit"])
 
-# TAB 1: TTS (Original Radio Button Style)
+# TAB 1: TTS
 with tab1:
     script = st.text_area("Script Likhein (Bulk ke liye '---' use karein):")
-    gender_choice = st.radio("Voice Select Karein:", list(voices.keys()), horizontal=True)
+    # Using Selectbox for long list but keeping the style clean
+    selected_voice_label = st.selectbox("Awaz Chunein:", list(voices.keys()))
     
     if st.button("🚀 Generate TTS"):
         if script:
             parts = [s.strip() for s in script.split("---") if s.strip()]
             for i, p_text in enumerate(parts):
                 with st.spinner(f"Processing Part {i+1}..."):
-                    communicate = edge_tts.Communicate(p_text, voices[gender_choice])
+                    communicate = edge_tts.Communicate(p_text, voices[selected_voice_label])
                     t_file = f"tts_{i}.mp3"
                     asyncio.run(communicate.save(t_file))
                     sound = apply_audio_effects(AudioSegment.from_file(t_file), pitch, echo, speed, mastering)
                     out = io.BytesIO()
                     sound.export(out, format="mp3")
                     st.audio(out)
-                    st.download_button(f"⬇️ Download Part {i+1}", out, f"audio_{i+1}.mp3")
+                    st.download_button(f"⬇️ Download {i+1}", out, f"voice_{i+1}.mp3")
                     os.remove(t_file)
 
-# TAB 2: Dialogue Mixer (Mixing M/F)
+# TAB 2: Dialogue Mixer
 with tab2:
     st.subheader("Mixed Dialogue Creator")
-    mix_script = st.text_area("Dialogue Script (Line 1 --- Line 2):", placeholder="Line 1\n---\nLine 2")
+    mix_script = st.text_area("Dialogue Script (Line 1 --- Line 2):")
     col1, col2 = st.columns(2)
     with col1:
-        v1 = st.selectbox("Character 1:", list(voices.keys()), index=0)
+        v1 = st.selectbox("Character 1 (Lines 1,3,5):", list(voices.keys()), index=0)
     with col2:
-        v2 = st.selectbox("Character 2:", list(voices.keys()), index=1)
+        v2 = st.selectbox("Character 2 (Lines 2,4,6):", list(voices.keys()), index=1)
 
     if st.button("🎭 Combine Dialogue"):
         if mix_script:
@@ -95,7 +112,7 @@ with tab2:
             f_out = io.BytesIO()
             combined.export(f_out, format="mp3")
             st.audio(f_out)
-            st.download_button("⬇️ Download Full Dialogue", f_out, "dialogue.mp3")
+            st.download_button("⬇️ Download Full Dialogue", f_out, "mixed_dialogue.mp3")
 
 # TAB 3: Editor
 with tab3:
@@ -105,3 +122,4 @@ with tab3:
         out_io = io.BytesIO()
         sound.export(out_io, format="mp3")
         st.audio(out_io)
+
