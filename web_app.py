@@ -7,144 +7,153 @@ import os
 from groq import Groq
 import requests
 import re
+import random
 
-# --- Page Config (Must be at the top) ---
+# --- Page Config ---
 st.set_page_config(page_title="AI Mega Studio Pro", page_icon="🎙️", layout="wide")
 
-# --- CSS for Better UI ---
-st.markdown("""<style> .stTabs [data-baseweb="tab-list"] { gap: 10px; } 
-            .stTabs [data-baseweb="tab"] { padding: 10px 20px; background-color: #f0f2f6; border-radius: 5px; }
-            </style>""", unsafe_allow_html=True)
-
-# --- API Session Logic ---
+# --- API Logic ---
 if "api_key" not in st.session_state:
-    st.session_state.api_key = ""
+    st.session_state.api_key = ""
 
 try:
-    if "GROQ_API_KEY" in st.secrets:
-        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-    else:
-        client = Groq(api_key=st.session_state.api_key)
+    key = st.secrets["GROQ_API_KEY"] if "GROQ_API_KEY" in st.secrets else st.session_state.api_key
+    client = Groq(api_key=key)
 except Exception:
-    st.sidebar.warning("⚠️ Groq Key missing!")
+    st.sidebar.warning("⚠️ API Key missing!")
 
-# --- Audio Engine ---
+# --- Pro Audio Engine ---
 def apply_pro_effects(audio_segment, pitch_val, echo_val, speed_val, is_mastering):
-    try:
-        if speed_val != 0:
-            new_rate = int(audio_segment.frame_rate * (1 + speed_val/100))
-            audio_segment = audio_segment._spawn(audio_segment.raw_data, overrides={'frame_rate': new_rate})
-            audio_segment = audio_segment.set_frame_rate(44100)
-        if pitch_val != 0:
-            new_sample_rate = int(audio_segment.frame_rate * (2.0 ** (pitch_val / 12.0)))
-            audio_segment = audio_segment._spawn(audio_segment.raw_data, overrides={'frame_rate': new_sample_rate})
-            audio_segment = audio_segment.set_frame_rate(44100)
-        if echo_val > 0:
-            delay = 150 
-            echo = audio_segment - (30 - echo_val)
-            audio_segment = audio_segment.overlay(echo, position=delay)
-        if is_mastering:
-            audio_segment = effects.normalize(audio_segment)
-        return audio_segment
-    except Exception:
-        return audio_segment
+    try:
+        if speed_val != 0:
+            new_rate = int(audio_segment.frame_rate * (1 + speed_val/100))
+            audio_segment = audio_segment._spawn(audio_segment.raw_data, overrides={'frame_rate': new_rate})
+            audio_segment = audio_segment.set_frame_rate(44100)
+        if pitch_val != 0:
+            new_sample_rate = int(audio_segment.frame_rate * (2.0 ** (pitch_val / 12.0)))
+            audio_segment = audio_segment._spawn(audio_segment.raw_data, overrides={'frame_rate': new_sample_rate})
+            audio_segment = audio_segment.set_frame_rate(44100)
+        if echo_val > 0:
+            delay = 150 
+            echo = audio_segment - (30 - echo_val)
+            audio_segment = audio_segment.overlay(echo, position=delay)
+        if is_mastering:
+            audio_segment = effects.normalize(audio_segment)
+        return audio_segment
+    except Exception:
+        return audio_segment
 
-# --- 30+ Voice Library ---
-voice_list = {
-    "🇵🇰 Urdu Male (Asad)": "ur-PK-AsadNeural",
-    "🇵🇰 Urdu Female (Uzma)": "ur-PK-UzmaNeural",
-    "🇮🇳 Hindi Male (Madhur)": "hi-IN-MadhurNeural",
-    "🇮🇳 Hindi Female (Swara)": "hi-IN-SwaraNeural",
-    "🇮🇳 Hindi Female (Ananya)": "hi-IN-AnanyaNeural",
-    "🇺🇸 US Male (Guy)": "en-US-GuyNeural",
-    "🇺🇸 US Female (Aria)": "en-US-AriaNeural",
-    "🇬🇧 UK Male (Ryan)": "en-GB-RyanNeural",
-    "🇬🇧 UK Female (Sonia)": "en-GB-SoniaNeural",
-    "🎙️ EN-India Male (Prabhat)": "en-IN-PrabhatNeural",
-    "🎙️ EN-India Female (Neerja)": "en-IN-NeerjaNeural",
-    "👦 Young Boy": "en-US-GuyNeural", 
-    "👧 Young Girl": "en-US-AnaNeural",
-    "🤖 Sci-Fi Robot": "en-GB-RyanNeural",
-    "🎭 Movie Narrator": "en-AU-WilliamNeural",
-    "🇸🇦 Arabic Male (Hamed)": "ar-SA-HamedNeural",
-    "🇸🇦 Arabic Female (Zariyah)": "ar-SA-ZariyahNeural"
+# --- VOICE LIBRARY ---
+voice_library = {
+    "🇵🇰 Urdu Male (Asad)": "ur-PK-AsadNeural",
+    "🇵🇰 Urdu Female (Uzma)": "ur-PK-UzmaNeural",
+    "🇮🇳 Hindi Male (Madhur)": "hi-IN-MadhurNeural",
+    "🇮🇳 Hindi Female (Swara)": "hi-IN-SwaraNeural",
+    "🇺🇸 US Male (Guy)": "en-US-GuyNeural",
+    "🎭 Movie Narrator": "en-AU-WilliamNeural",
+    "🤖 Sci-Fi Robot": "en-GB-RyanNeural"
 }
 
 # --- Sidebar ---
-st.sidebar.header("🎚️ Studio Settings")
-p_val = st.sidebar.select_slider("Voice Depth:", options=[-10, -5, 0, 5, 10], value=-5, key="p_v_sidebar")
-e_val = st.sidebar.slider("Reverb (Echo):", 0, 5, 1, key="e_v_sidebar")
-s_val = st.sidebar.select_slider("Talk Speed:", options=[-10, 0, 10, 20], value=0, key="s_v_sidebar")
-mastering_on = st.sidebar.checkbox("Auto-Mastering (Clean Sound)", value=True, key="m_v_sidebar")
+st.sidebar.header("🎚️ Global Settings")
+p_val = st.sidebar.select_slider("Voice Depth:", options=[-10, -5, 0, 5, 10], value=-5, key="p_side")
+e_val = st.sidebar.slider("Echo:", 0, 5, 1, key="e_side")
+s_val = st.sidebar.select_slider("Speed:", options=[-10, 0, 10, 20], value=0, key="s_side")
+mastering_on = st.sidebar.checkbox("Auto-Mastering", value=True, key="m_side")
 
-# --- Main Tabs ---
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["✍️ TTS", "👥 Dialogue Mixer", "📁 Editor", "🤖 JARVIS AI", "🎨 IMAGE GEN"])
+# --- Tabs ---
+tabs = st.tabs(["✍️ TTS", "👥 Mixer", "📁 Editor", "🤖 JARVIS", "🎨 IMAGE", "📝 SCRIPT", "🎵 BGM", "🎬 TALK", "🔊 CLONE", "✂️ MERGE"])
 
-with tab1:
-    st.subheader("✍️ Bulk Text to Speech")
-    script = st.text_area("Script Likhein (Split with ---):", key="main_tts_input")
-    v_choice = st.selectbox("Awaz Chunain:", list(voice_list.keys()), key="main_tts_voice")
-    if st.button("Generate TTS", key="main_tts_btn"):
-        if script:
-            parts = [s.strip() for s in script.split("---") if s.strip()]
-            for i, p_text in enumerate(parts):
-                with st.spinner(f"Part {i+1}..."):
-                    communicate = edge_tts.Communicate(p_text, voice_list[v_choice])
-                    asyncio.run(communicate.save(f"t_{i}.mp3"))
-                    raw = AudioSegment.from_file(f"t_{i}.mp3")
-                    final = apply_pro_effects(raw, p_val, e_val, s_val, mastering_on)
-                    st.audio(final.export(io.BytesIO(), format="mp3"))
-                    os.remove(f"t_{i}.mp3")
+# TAB 1: TTS
+with tabs[0]:
+    st.subheader("Bulk TTS")
+    script = st.text_area("Script (--- use karein):", key="t1_in")
+    v_choice = st.selectbox("Select Voice:", list(voice_library.keys()), key="t1_v")
+    if st.button("Generate TTS", key="t1_btn"):
+        parts = [s.strip() for s in script.split("---") if s.strip()]
+        for i, p in enumerate(parts):
+            communicate = edge_tts.Communicate(p, voice_library[v_choice])
+            asyncio.run(communicate.save(f"t_{i}.mp3"))
+            st.audio(apply_pro_effects(AudioSegment.from_file(f"t_{i}.mp3"), p_val, e_val, s_val, mastering_on).export(io.BytesIO(), format="mp3"))
 
-with tab2:
-    st.subheader("👥 Multi-Voice Mixer")
-    c1, c2 = st.columns(2)
-    with c1: v1 = st.selectbox("Voice 1:", list(voice_list.keys()), index=0, key="mx_v1")
-    with c2: v2 = st.selectbox("Voice 2:", list(voice_list.keys()), index=1, key="mx_v2")
-    mix_text = st.text_area("Dialogues (L1 --- L2):", key="mx_input")
-    if st.button("Mix Now", key="mx_btn"):
-        lines = [l.strip() for l in mix_text.split("---") if l.strip()]
-        combined = AudioSegment.empty()
-        for idx, line in enumerate(lines):
-            target = voice_list[v1] if idx % 2 == 0 else voice_list[v2]
-            communicate = edge_tts.Communicate(line, target)
-            asyncio.run(communicate.save("m.mp3"))
-            combined += apply_pro_effects(AudioSegment.from_file("m.mp3"), p_val, e_val, s_val, mastering_on) + AudioSegment.silent(duration=500)
-            os.remove("m.mp3")
-        st.audio(combined.export(io.BytesIO(), format="mp3"))
+# TAB 2: Mixer
+with tabs[1]:
+    st.subheader("Dialogue Mixer")
+    c1, c2 = st.columns(2)
+    vm1 = c1.selectbox("Voice A:", list(voice_library.keys()), index=0, key="t2_v1")
+    vm2 = c2.selectbox("Voice B:", list(voice_library.keys()), index=1, key="t2_v2")
+    diag = st.text_area("Dialogues (A --- B):", key="t2_in")
+    if st.button("Mix Now", key="t2_btn"):
+        lines = [l.strip() for l in diag.split("---") if l.strip()]
+        combined = AudioSegment.empty()
+        for idx, line in enumerate(lines):
+            v = voice_library[vm1] if idx % 2 == 0 else voice_library[vm2]
+            communicate = edge_tts.Communicate(line, v)
+            asyncio.run(communicate.save("m.mp3"))
+            combined += apply_pro_effects(AudioSegment.from_file("m.mp3"), p_val, e_val, s_val, mastering_on) + AudioSegment.silent(500)
+        st.audio(combined.export(io.BytesIO(), format="mp3"))
 
-with tab3:
-    st.subheader("📁 Audio Effects Editor")
-    up = st.file_uploader("Upload File:", type=["mp3", "wav"], key="edit_up")
-    if up and st.button("Apply Effects", key="edit_btn"):
-        res = apply_pro_effects(AudioSegment.from_file(up), p_val, e_val, s_val, mastering_on)
-        st.audio(res.export(io.BytesIO(), format="mp3"))
+# TAB 3: Editor (M4A Support)
+with tabs[2]:
+    st.subheader("Audio Effects Editor")
+    up = st.file_uploader("Upload (MP3, M4A, WAV):", type=["mp3", "m4a", "wav"], key="t3_u")
+    if up and st.button("Apply Effects", key="t3_btn"):
+        st.audio(apply_pro_effects(AudioSegment.from_file(up), p_val, e_val, s_val, mastering_on).export(io.BytesIO(), format="mp3"))
 
-with tab4:
-    st.subheader("🤖 Jarvis AI (Pro)")
-    j_v = st.selectbox("Jarvis Voice:", list(voice_list.keys()), index=0, key="jr_voice")
-    user_q = st.text_input("Order Boss?", key="jr_input")
-    if st.button("Submit", key="jr_btn"):
-        if user_q:
-            res = client.chat.completions.create(
-                messages=[{"role": "system", "content": "You are Jarvis. Speak Roman Urdu. For images: AI_IMAGE_PROMPT: (English Prompt)"}, {"role": "user", "content": user_q}],
-                model="llama-3.3-70b-versatile"
-            )
-            ans = res.choices[0].message.content
-            text_ans = ans.split("AI_IMAGE_PROMPT:")[0].strip()
-            st.write(f"🤖 **Jarvis:** {text_ans}")
-            communicate = edge_tts.Communicate(text_ans, voice_list[j_v])
-            asyncio.run(communicate.save("j.mp3"))
-            st.audio(apply_pro_effects(AudioSegment.from_file("j.mp3"), p_val, e_val, s_val, mastering_on).export(io.BytesIO(), format="mp3"))
-            os.remove("j.mp3")
-            if "AI_IMAGE_PROMPT:" in ans:
-                img_p = re.sub(r'[^a-zA-Z0-9\s]', '', ans.split("AI_IMAGE_PROMPT:")[1])
-                url = f"https://pollinations.ai/p/{img_p.replace(' ', '%20')}?width=1024&height=1024&model=flux"
-                st.image(url)
+# TAB 4: Jarvis
+with tabs[3]:
+    st.subheader("Jarvis AI Assistant")
+    jv = st.selectbox("Jarvis Voice:", list(voice_library.keys()), key="t4_v")
+    q = st.text_input("Order Boss?", key="t4_in")
+    if st.button("Execute", key="t4_btn"):
+        res = client.chat.completions.create(messages=[{"role":"system","content":"Speak Roman Urdu. For images: AI_IMAGE_PROMPT: (English)"},{"role":"user","content":q}], model="llama-3.3-70b-versatile")
+        ans = res.choices[0].message.content
+        txt = ans.split('AI_IMAGE_PROMPT:')[0]
+        st.write(f"🤖 Jarvis: {txt}")
+        communicate = edge_tts.Communicate(txt, voice_library[jv])
+        asyncio.run(communicate.save("j.mp3"))
+        st.audio(apply_pro_effects(AudioSegment.from_file("j.mp3"), p_val, e_val, s_val, mastering_on).export(io.BytesIO(), format="mp3"))
+        if "AI_IMAGE_PROMPT:" in ans:
+            img_p = re.sub(r'[^a-zA-Z0-9\s]', '', ans.split("AI_IMAGE_PROMPT:")[1]).replace(' ', '%20')
+            st.image(f"https://pollinations.ai/p/{img_p}?width=1024&height=1024&model=flux")
 
-with tab5:
-    st.subheader("🎨 Direct Image Gen")
-    p_in = st.text_input("Idea (English):", key="id_direct_in")
-    if st.button("Generate", key="id_direct_btn"):
-        clean = re.sub(r'[^a-zA-Z0-9\s]', '', p_in).replace(' ', '%20')
-        st.image(f"https://pollinations.ai/p/{clean}?width=1024&height=1024&model=flux")
+# TAB 5: Image (Fixed)
+with tabs[4]:
+    st.subheader("AI Image Generator")
+    pi = st.text_input("Idea:", key="t5_in")
+    if st.button("Generate Image", key="t5_btn"):
+        if pi:
+            clean_prompt = re.sub(r'[^a-zA-Z0-9\s]', '', pi).replace(' ', '%20')
+            seed = random.randint(1, 100000)
+            img_url = f"https://pollinations.ai/p/{clean_prompt}?width=1024&height=1024&seed={seed}&model=flux"
+            st.image(img_url)
+        else: st.warning("Kuch likhein!")
+
+# TAB 6: Script
+with tabs[5]:
+    st.subheader("AI Script Writer")
+    top = st.text_input("Topic:", key="t6_in")
+    if st.button("Write", key="t6_btn"):
+        res = client.chat.completions.create(messages=[{"role":"user","content":f"Write script in Roman Urdu: {top}"}], model="llama-3.3-70b-versatile")
+        st.text_area("Script:", value=res.choices[0].message.content, height=200)
+
+# TAB 7: BGM
+with tabs[6]:
+    st.subheader("BGM Mixer")
+    vf = st.file_uploader("Voice:", type=["mp3", "m4a"], key="t7_v")
+    mf = st.file_uploader("Music:", type=["mp3"], key="m_bg")
+    if vf and mf and st.button("Mix BGM"):
+        v = AudioSegment.from_file(vf); m = AudioSegment.from_file(mf) - 15
+        st.audio(v.overlay(m, loop=True).export(io.BytesIO(), format="mp3"))
+
+# TAB 8, 9, 10: Advanced
+with tabs[7]: st.subheader("🎬 Talking Head"); st.file_uploader("Image:", type=["jpg"], key="th_i")
+with tabs[8]: st.subheader("🔊 Voice Cloning"); st.file_uploader("Sample:", type=["wav"], key="cl_s")
+with tabs[9]:
+    st.subheader("✂️ Merger")
+    f1 = st.file_uploader("Part 1:", type=["mp3", "m4a"], key="mr_1")
+    f2 = st.file_uploader("Part 2:", type=["mp3", "m4a"], key="mr_2")
+    if f1 and f2 and st.button("Merge"):
+        mrg = AudioSegment.from_file(f1) + AudioSegment.from_file(f2)
+        st.audio(mrg.export(io.BytesIO(), format="mp3"))
+
