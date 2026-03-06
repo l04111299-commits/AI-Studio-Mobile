@@ -1,6 +1,7 @@
 streamlit
 edge-tts
 pydub
+groq
 
 
 
