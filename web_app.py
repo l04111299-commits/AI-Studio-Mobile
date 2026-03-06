@@ -85,4 +85,3 @@ with t[9]: # Merge
     f1, f2 = st.file_uploader("File 1"), st.file_uploader("File 2")
     if f1 and f2 and st.button("Merge Now"):
         st.audio((AudioSegment.from_file(f1)+AudioSegment.from_file(f2)).export(io.BytesIO(), format="mp3"))
-
